@@ -1,0 +1,339 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>UTC Synced Audio Player (GitHub Pages)</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #0f1115;
+      --panel: #171a21;
+      --soft: #232733;
+      --text: #eef2ff;
+      --muted: #b8c0d9;
+      --accent: #8ab4ff;
+      --good: #69d19a;
+      --warn: #ffcc66;
+      --bad: #ff8a8a;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: linear-gradient(180deg, #0d0f14, #151925);
+      color: var(--text);
+      min-height: 100vh;
+      display: flex;
+      justify-content: center;
+      padding: 24px;
+    }
+    .app {
+      width: 100%;
+      max-width: 860px;
+      background: rgba(23, 26, 33, 0.92);
+      border: 1px solid rgba(255,255,255,0.06);
+      border-radius: 20px;
+      padding: 24px;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.35);
+    }
+    h1 { margin: 0 0 8px; font-size: 1.8rem; }
+    p { color: var(--muted); line-height: 1.5; }
+    .grid {
+      display: grid;
+      gap: 16px;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      margin-top: 20px;
+    }
+    .card {
+      background: var(--panel);
+      border: 1px solid rgba(255,255,255,0.05);
+      border-radius: 16px;
+      padding: 16px;
+    }
+    label {
+      display: block;
+      font-size: 0.85rem;
+      color: var(--muted);
+      margin-bottom: 8px;
+    }
+    input {
+      width: 100%;
+      padding: 12px;
+      border-radius: 10px;
+      border: 1px solid rgba(255,255,255,0.08);
+      background: var(--soft);
+      color: var(--text);
+      font-size: 0.95rem;
+    }
+    button {
+      appearance: none;
+      border: 0;
+      border-radius: 12px;
+      padding: 12px 16px;
+      background: var(--accent);
+      color: #07111f;
+      font-weight: 700;
+      cursor: pointer;
+      font-size: 0.95rem;
+    }
+    button.secondary {
+      background: #31384a;
+      color: var(--text);
+    }
+    .row {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+      margin-top: 12px;
+    }
+    .status {
+      margin-top: 18px;
+      padding: 16px;
+      border-radius: 14px;
+      background: #121620;
+      border: 1px solid rgba(255,255,255,0.06);
+    }
+    .pill {
+      display: inline-block;
+      padding: 6px 10px;
+      border-radius: 999px;
+      font-size: 0.8rem;
+      font-weight: 700;
+      margin-bottom: 10px;
+    }
+    .good { background: rgba(105,209,154,0.15); color: var(--good); }
+    .warn { background: rgba(255,204,102,0.15); color: var(--warn); }
+    .bad { background: rgba(255,138,138,0.15); color: var(--bad); }
+    .mono {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 0.9rem;
+      color: #dbe5ff;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .small { font-size: 0.86rem; color: var(--muted); }
+  </style>
+</head>
+<body>
+  <div class="app">
+    <h1>UTC-Synced Audio Player</h1>
+    <p>
+      Load one audio file, estimate clock offset from the hosting server, and start all listeners at the same point in the track. This version is ready to deploy as a static site on GitHub Pages.
+      This is an MVP aimed at a shared-building headphone experience.
+    </p>
+
+    <div class="grid">
+      <div class="card">
+        <label for="audioUrl">Audio URL</label>
+        <input id="audioUrl" value="./piece.mp3" />
+
+        <label for="startUtc" style="margin-top: 14px;">UTC start time (ISO 8601)</label>
+        <input id="startUtc" value="2026-03-08T19:00:00Z" />
+
+        <div class="row">
+          <button id="armBtn">Arm & Preload</button>
+          <button id="syncBtn" class="secondary">Resync Clock</button>
+        </div>
+        <p class="small">Everyone must tap once due to browser audio autoplay restrictions.</p>
+      </div>
+
+      <div class="card">
+        <div class="small">Live diagnostics</div>
+        <div id="diag" class="mono" style="margin-top: 10px;"></div>
+      </div>
+    </div>
+
+    <div class="status">
+      <div id="statePill" class="pill warn">Waiting</div>
+      <div id="statusText" class="mono">Tap “Arm & Preload” to begin.</div>
+    </div>
+  </div>
+
+  <script>
+    const audioUrlEl = document.getElementById('audioUrl');
+    const startUtcEl = document.getElementById('startUtc');
+    const armBtn = document.getElementById('armBtn');
+    const syncBtn = document.getElementById('syncBtn');
+    const diagEl = document.getElementById('diag');
+    const statePill = document.getElementById('statePill');
+    const statusText = document.getElementById('statusText');
+
+    let ctx = null;
+    let gainNode = null;
+    let decodedBuffer = null;
+    let activeSource = null;
+    let clockOffsetMs = 0; // server clock - local clock
+    let estimatedRttMs = null;
+    let rafId = null;
+    let startedAtServerMs = null;
+    let startedAtCtxTime = null;
+    let currentAudioUrl = null;
+
+    function setState(kind, text) {
+      statePill.className = `pill ${kind}`;
+      statePill.textContent = kind === 'good' ? 'Ready' : kind === 'warn' ? 'Waiting' : 'Attention';
+      statusText.textContent = text;
+    }
+
+    function fmtMs(ms) {
+      return `${ms >= 0 ? '+' : ''}${ms.toFixed(1)} ms`;
+    }
+
+    function fmtSec(sec) {
+      return `${sec.toFixed(3)} s`;
+    }
+
+    async function ensureAudioContext() {
+      if (!ctx) {
+        ctx = new (window.AudioContext || window.webkitAudioContext)();
+        gainNode = ctx.createGain();
+        gainNode.gain.value = 1.0;
+        gainNode.connect(ctx.destination);
+      }
+      if (ctx.state !== 'running') {
+        await ctx.resume();
+      }
+    }
+
+    async function estimateServerClock(samples = 7) {
+      const offsets = [];
+      const rtts = [];
+
+      for (let i = 0; i < samples; i++) {
+        const t0 = Date.now();
+        const response = await fetch(window.location.href, {
+          method: 'HEAD',
+          cache: 'no-store'
+        });
+        const t1 = Date.now();
+        const serverDate = response.headers.get('Date');
+        if (!serverDate) {
+          throw new Error('No Date header found. Put this file behind a normal HTTP server.');
+        }
+        const serverMs = new Date(serverDate).getTime();
+        const midpoint = t0 + (t1 - t0) / 2;
+        offsets.push(serverMs - midpoint);
+        rtts.push(t1 - t0);
+        await new Promise(r => setTimeout(r, 120));
+      }
+
+      offsets.sort((a, b) => a - b);
+      rtts.sort((a, b) => a - b);
+      clockOffsetMs = offsets[Math.floor(offsets.length / 2)];
+      estimatedRttMs = rtts[Math.floor(rtts.length / 2)];
+      return { clockOffsetMs, estimatedRttMs };
+    }
+
+    function serverNowMs() {
+      return Date.now() + clockOffsetMs;
+    }
+
+    async function loadAudioBuffer(url) {
+      if (decodedBuffer && currentAudioUrl === url) return decodedBuffer;
+      const res = await fetch(url, { cache: 'force-cache' });
+      if (!res.ok) throw new Error(`Audio fetch failed: ${res.status}`);
+      const arrayBuffer = await res.arrayBuffer();
+      decodedBuffer = await ctx.decodeAudioData(arrayBuffer.slice(0));
+      currentAudioUrl = url;
+      return decodedBuffer;
+    }
+
+    function stopExistingSource() {
+      if (activeSource) {
+        try { activeSource.stop(); } catch (_) {}
+        try { activeSource.disconnect(); } catch (_) {}
+        activeSource = null;
+      }
+    }
+
+    function schedulePlayback() {
+      if (!ctx || !decodedBuffer) return;
+
+      stopExistingSource();
+
+      const startUtcMs = new Date(startUtcEl.value).getTime();
+      if (Number.isNaN(startUtcMs)) {
+        throw new Error('Invalid UTC start time. Use ISO format like 2026-03-08T19:00:00Z');
+      }
+
+      const nowServerMs = serverNowMs();
+      const elapsedSec = Math.max(0, (nowServerMs - startUtcMs) / 1000);
+
+      if (elapsedSec >= decodedBuffer.duration) {
+        setState('bad', 'The scheduled piece has already finished.');
+        return;
+      }
+
+      const source = ctx.createBufferSource();
+      source.buffer = decodedBuffer;
+      source.connect(gainNode);
+
+      const leadInSec = Math.max(0.25, (estimatedRttMs || 0) / 1000);
+      const ctxStartTime = ctx.currentTime + leadInSec;
+
+      source.start(ctxStartTime, elapsedSec);
+      activeSource = source;
+      startedAtServerMs = nowServerMs - elapsedSec * 1000;
+      startedAtCtxTime = ctxStartTime - elapsedSec;
+
+      setState('good', `Synced. Playing from ${fmtSec(elapsedSec)} into the track.`);
+    }
+
+    function renderDiagnostics() {
+      const nowServer = serverNowMs();
+      const startUtcMs = new Date(startUtcEl.value).getTime();
+      const untilStart = Number.isNaN(startUtcMs) ? null : (startUtcMs - nowServer) / 1000;
+      const playhead = startedAtCtxTime == null || !ctx ? null : Math.max(0, ctx.currentTime - startedAtCtxTime);
+
+      diagEl.textContent = [
+        `Local time:        ${new Date().toISOString()}`,
+        `Estimated server:  ${new Date(nowServer).toISOString()}`,
+        `Clock offset:      ${fmtMs(clockOffsetMs)}`,
+        `Median RTT:        ${estimatedRttMs == null ? '—' : fmtMs(estimatedRttMs)}`,
+        `Until start:       ${untilStart == null ? '—' : fmtSec(untilStart)}`,
+        `Track playhead:    ${playhead == null ? '—' : fmtSec(playhead)}`,
+        `Audio loaded:      ${decodedBuffer ? 'yes' : 'no'}`,
+        `AudioContext:      ${ctx ? ctx.state : 'not created'}`
+      ].join('\n');
+
+      rafId = requestAnimationFrame(renderDiagnostics);
+    }
+
+    armBtn.addEventListener('click', async () => {
+      armBtn.disabled = true;
+      try {
+        setState('warn', 'Resuming audio, syncing clock, and preloading file…');
+        await ensureAudioContext();
+        await estimateServerClock();
+        await loadAudioBuffer(audioUrlEl.value.trim());
+        schedulePlayback();
+      } catch (err) {
+        console.error(err);
+        setState('bad', err.message || 'Something went wrong.');
+      } finally {
+        armBtn.disabled = false;
+      }
+    });
+
+    syncBtn.addEventListener('click', async () => {
+      syncBtn.disabled = true;
+      try {
+        await estimateServerClock();
+        if (decodedBuffer && ctx && ctx.state === 'running') {
+          schedulePlayback();
+        } else {
+          setState('warn', 'Clock resynced. Audio not armed yet.');
+        }
+      } catch (err) {
+        console.error(err);
+        setState('bad', err.message || 'Clock sync failed.');
+      } finally {
+        syncBtn.disabled = false;
+      }
+    });
+
+    renderDiagnostics();
+  </script>
+</body>
+</html>
