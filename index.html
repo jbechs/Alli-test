@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Alli Test - Stable Direct Player</title>
+  <title>Alli Test - Simple Synced Player</title>
   <style>
     body {
       margin: 0;
@@ -20,6 +20,15 @@
       text-align: center;
       display: grid;
       gap: 14px;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 1.5rem;
+    }
+
+    label {
+      font-size: 0.95rem;
     }
 
     input,
@@ -46,10 +55,11 @@
       min-height: 2.5em;
       color: #ccc;
       white-space: pre-line;
+      font-size: 0.95rem;
     }
 
     audio {
-      width: 100%;
+      display: none;
     }
   </style>
 </head>
@@ -60,13 +70,11 @@
     <label for="startTime">Start Time (UTC)</label>
     <input id="startTime" type="datetime-local" step="1" />
 
-    <button id="loadButton">Load Audio</button>
     <button id="playButton">Play</button>
-    <button id="stopButton">Stop</button>
 
-    <div id="status" class="status">Ready.</div>
+    <div id="status" class="status">Loading audio...</div>
 
-    <audio id="audio" controls preload="auto" playsinline>
+    <audio id="audio" preload="auto" playsinline>
       <source src="audio/track.mp3" type="audio/mpeg" />
       Your browser does not support audio playback.
     </audio>
@@ -74,42 +82,25 @@
 
   <script>
     const audio = document.getElementById("audio");
-    const loadButton = document.getElementById("loadButton");
     const playButton = document.getElementById("playButton");
-    const stopButton = document.getElementById("stopButton");
     const startTimeInput = document.getElementById("startTime");
     const statusEl = document.getElementById("status");
 
     let countdownTimer = null;
     let startTimestampMs = null;
-    let audioLoaded = false;
+    let audioReady = false;
 
-    console.log("STABLE DIRECT PLAYER LOADED");
+    console.log("AUTO-LOAD PLAYER LOADED");
 
-    loadButton.addEventListener("click", async () => {
-      try {
-        audioLoaded = false;
-        setStatus("Loading audio...");
-
-        audio.load();
-
-        await waitForLoad(audio, 20000);
-
-        audioLoaded = true;
-        setStatus(`Audio loaded.\nDuration: ${formatTime(audio.duration || 0)}.`);
-      } catch (err) {
-        console.error("LOAD FAILED:", err);
-        setStatus(`Load failed: ${err.message}`);
-      }
+    // Start loading immediately when page opens
+    window.addEventListener("load", () => {
+      setStatus("Loading audio...");
+      audio.load();
+      monitorInitialLoad();
     });
 
     playButton.addEventListener("click", async () => {
       clearExistingTimers();
-
-      if (!audioLoaded) {
-        setStatus("Load audio first.");
-        return;
-      }
 
       const inputValue = startTimeInput.value;
       if (!inputValue) {
@@ -125,11 +116,24 @@
       }
 
       try {
-        // unlock / warm up
+        // unlock audio for browsers that want a user gesture
         await audio.play();
         audio.pause();
       } catch (err) {
-        console.log("Initial unlock attempt failed:", err);
+        console.log("Initial unlock attempt:", err);
+      }
+
+      // If not ready yet, wait quietly here instead of failing
+      if (!audioReady) {
+        setStatus("Finishing audio load...");
+        try {
+          await waitForPlayable(audio, 20000);
+          audioReady = true;
+        } catch (err) {
+          console.error("Playable wait failed:", err);
+          setStatus(`Audio load failed: ${err.message}`);
+          return;
+        }
       }
 
       const offsetSeconds = (Date.now() - startTimestampMs) / 1000;
@@ -139,12 +143,6 @@
       } else {
         beginPlayback(offsetSeconds);
       }
-    });
-
-    stopButton.addEventListener("click", () => {
-      clearExistingTimers();
-      audio.pause();
-      setStatus("Stopped.");
     });
 
     function parseUtcInput(value) {
@@ -177,35 +175,62 @@
           return;
         }
 
-        audio.pause();
-
-        // If supported, this is often gentler than raw currentTime seeking
-        if (typeof audio.fastSeek === "function") {
-          try {
-            audio.fastSeek(offset);
-          } catch (err) {
-            audio.currentTime = offset;
-          }
-        } else {
-          audio.currentTime = offset;
+        // Make sure enough data is available before seeking/playing
+        if (audio.readyState < 2) {
+          setStatus("Preparing playback...");
+          await waitForPlayable(audio, 15000);
         }
+
+        audio.pause();
+        audio.currentTime = offset;
 
         await waitForSeekIfNeeded(audio, 3000);
 
-        // small beat for the browser to settle after seek
-        await delay(150);
+        // brief settle time after seek
+        await delay(120);
 
         await audio.play();
         setStatus(`Playing from ${formatTime(audio.currentTime)}.`);
       } catch (err) {
-        console.error("PLAYBACK FAILED:", err);
+        console.error("Playback failed:", err);
         setStatus(`Playback failed: ${err.message}`);
       }
     }
 
-    function waitForLoad(el, timeoutMs = 20000) {
+    function monitorInitialLoad() {
+      if (audio.readyState >= 2) {
+        audioReady = true;
+        setStatus(`Audio ready. Duration: ${formatTime(audio.duration || 0)}.`);
+        return;
+      }
+
+      const onReady = () => {
+        audioReady = true;
+        cleanup();
+        setStatus(`Audio ready. Duration: ${formatTime(audio.duration || 0)}.`);
+      };
+
+      const onError = () => {
+        cleanup();
+        setStatus(`Audio error: ${describeMediaError(audio)}`);
+      };
+
+      function cleanup() {
+        audio.removeEventListener("loadeddata", onReady);
+        audio.removeEventListener("canplay", onReady);
+        audio.removeEventListener("canplaythrough", onReady);
+        audio.removeEventListener("error", onError);
+      }
+
+      audio.addEventListener("loadeddata", onReady, { once: true });
+      audio.addEventListener("canplay", onReady, { once: true });
+      audio.addEventListener("canplaythrough", onReady, { once: true });
+      audio.addEventListener("error", onError, { once: true });
+    }
+
+    function waitForPlayable(el, timeoutMs = 15000) {
       return new Promise((resolve, reject) => {
-        if (el.readyState >= 3) {
+        if (el.readyState >= 2) {
           resolve();
           return;
         }
@@ -223,7 +248,7 @@
           if (done) return;
           done = true;
           cleanup();
-          reject(new Error("audio loading timeout"));
+          reject(new Error("buffering timeout"));
         };
 
         const onError = () => {
@@ -235,7 +260,6 @@
 
         const cleanup = () => {
           clearTimeout(timer);
-          el.removeEventListener("loadedmetadata", finish);
           el.removeEventListener("loadeddata", finish);
           el.removeEventListener("canplay", finish);
           el.removeEventListener("canplaythrough", finish);
@@ -244,7 +268,6 @@
 
         const timer = setTimeout(fail, timeoutMs);
 
-        el.addEventListener("loadedmetadata", finish, { once: true });
         el.addEventListener("loadeddata", finish, { once: true });
         el.addEventListener("canplay", finish, { once: true });
         el.addEventListener("canplaythrough", finish, { once: true });
