@@ -4,21 +4,13 @@ const startTimeInput = document.getElementById("startTime");
 const statusEl = document.getElementById("status");
 
 let syncInterval = null;
-let startTimestampMs = null;
 let countdownTimer = null;
+let startTimestampMs = null;
 
-// --- Tuning values ---
-// Small drift: gently correct with playbackRate
 const SOFT_CORRECT_THRESHOLD = 0.15; // seconds
 const HARD_CORRECT_THRESHOLD = 1.0;  // seconds
-
-// Maximum tiny speed adjustment
 const MAX_PLAYBACK_RATE_ADJUST = 0.02; // ±2%
-
-// How often to check sync
 const SYNC_CHECK_MS = 3000;
-
-// Update countdown text more often
 const COUNTDOWN_CHECK_MS = 250;
 
 playButton.addEventListener("click", async () => {
@@ -30,7 +22,6 @@ playButton.addEventListener("click", async () => {
     return;
   }
 
-  // Treat entered value as UTC
   startTimestampMs = parseUtcInput(inputValue);
 
   if (Number.isNaN(startTimestampMs)) {
@@ -38,29 +29,36 @@ playButton.addEventListener("click", async () => {
     return;
   }
 
+  setStatus("Preparing audio...");
+
   try {
-    // iOS/Safari often requires the audio element to be activated by a direct user gesture.
-    await audio.play();
-    audio.pause();
+    // Force metadata load if needed
+    audio.load();
+
+    await waitForAudioReady(audio, 5000);
+
+    const now = Date.now();
+    const offsetSeconds = (now - startTimestampMs) / 1000;
+
+    if (!Number.isNaN(audio.duration) && offsetSeconds >= audio.duration) {
+      setStatus("That start time is beyond the end of the track.");
+      return;
+    }
+
+    if (offsetSeconds < 0) {
+      setStatus("Waiting for scheduled start...");
+      waitUntilStart();
+    } else {
+      beginPlayback(offsetSeconds);
+    }
   } catch (err) {
     console.error(err);
-    setStatus("Audio could not be initialized. Try again.");
-    return;
-  }
-
-  const now = Date.now();
-  const offsetSeconds = (now - startTimestampMs) / 1000;
-
-  if (offsetSeconds < 0) {
-    waitUntilStart();
-  } else {
-    beginPlayback(offsetSeconds);
+    setStatus("Audio failed to load. Check the file path and filename.");
   }
 });
 
 function parseUtcInput(value) {
-  // datetime-local gives something like "2026-03-09T20:00:00"
-  // We want to interpret that AS UTC, not as local time.
+  // Interpret entered datetime-local value as UTC
   return new Date(value + "Z").getTime();
 }
 
@@ -81,26 +79,19 @@ function waitUntilStart() {
   tick();
 }
 
-function beginPlayback(initialOffsetSeconds) {
-  const trackDuration = audio.duration;
+async function beginPlayback(initialOffsetSeconds) {
+  try {
+    audio.currentTime = Math.max(0, initialOffsetSeconds);
+    audio.playbackRate = 1.0;
 
-  if (!Number.isNaN(trackDuration) && initialOffsetSeconds >= trackDuration) {
-    setStatus("The track has already finished.");
-    return;
+    await audio.play();
+
+    setStatus(`Playing from ${formatTime(audio.currentTime)}.`);
+    startSyncLoop();
+  } catch (err) {
+    console.error(err);
+    setStatus("Playback failed. Usually this means the audio file path is wrong or the browser blocked playback.");
   }
-
-  audio.currentTime = Math.max(0, initialOffsetSeconds);
-  audio.playbackRate = 1.0;
-
-  audio.play()
-    .then(() => {
-      setStatus(`Playing from ${formatTime(audio.currentTime)}.`);
-      startSyncLoop();
-    })
-    .catch((err) => {
-      console.error(err);
-      setStatus("Playback failed. Try pressing Play again.");
-    });
 }
 
 function startSyncLoop() {
@@ -113,14 +104,12 @@ function startSyncLoop() {
     const actualTime = audio.currentTime;
     const drift = expectedTime - actualTime;
 
-    // If expected time is past end of track, stop trying to sync
     if (!Number.isNaN(audio.duration) && expectedTime >= audio.duration) {
       setStatus("Track complete.");
       clearExistingTimers();
       return;
     }
 
-    // Large drift -> hard jump
     if (Math.abs(drift) >= HARD_CORRECT_THRESHOLD) {
       audio.currentTime = Math.max(0, expectedTime);
       audio.playbackRate = 1.0;
@@ -128,19 +117,50 @@ function startSyncLoop() {
       return;
     }
 
-    // Medium/small drift -> gentle correction via playbackRate
     if (Math.abs(drift) >= SOFT_CORRECT_THRESHOLD) {
       const correction = clamp(drift * 0.02, -MAX_PLAYBACK_RATE_ADJUST, MAX_PLAYBACK_RATE_ADJUST);
       audio.playbackRate = 1.0 + correction;
-      setStatus(
-        `Soft sync: expected ${formatTime(expectedTime)}, actual ${formatTime(actualTime)}, drift ${drift.toFixed(2)}s.`
-      );
+      setStatus(`Soft sync drift: ${drift.toFixed(2)}s`);
     } else {
-      // Close enough -> return to normal speed
       audio.playbackRate = 1.0;
       setStatus(`In sync at ${formatTime(actualTime)}.`);
     }
   }, SYNC_CHECK_MS);
+}
+
+function waitForAudioReady(audioEl, timeoutMs = 5000) {
+  return new Promise((resolve, reject) => {
+    if (audioEl.readyState >= 1) {
+      resolve();
+      return;
+    }
+
+    const onLoaded = () => {
+      cleanup();
+      resolve();
+    };
+
+    const onError = () => {
+      cleanup();
+      reject(new Error("Audio element reported an error while loading."));
+    };
+
+    const onTimeout = () => {
+      cleanup();
+      reject(new Error("Timed out waiting for audio metadata."));
+    };
+
+    const cleanup = () => {
+      clearTimeout(timer);
+      audioEl.removeEventListener("loadedmetadata", onLoaded);
+      audioEl.removeEventListener("error", onError);
+    };
+
+    audioEl.addEventListener("loadedmetadata", onLoaded);
+    audioEl.addEventListener("error", onError);
+
+    const timer = setTimeout(onTimeout, timeoutMs);
+  });
 }
 
 function clearExistingTimers() {
@@ -178,6 +198,11 @@ function formatTime(seconds) {
 
 audio.addEventListener("loadedmetadata", () => {
   setStatus(`Track loaded. Duration: ${formatTime(audio.duration)}.`);
+});
+
+audio.addEventListener("error", () => {
+  console.error("Audio error:", audio.error);
+  setStatus("Audio error: file may be missing or path may be incorrect.");
 });
 
 audio.addEventListener("ended", () => {
