@@ -3,13 +3,8 @@ const playButton = document.getElementById("playButton");
 const startTimeInput = document.getElementById("startTime");
 const statusEl = document.getElementById("status");
 
-let syncInterval = null;
 let countdownTimer = null;
 let startTimestampMs = null;
-
-// Only do rare hard resyncs
-const HARD_CORRECT_THRESHOLD = 2.0; // seconds
-const SYNC_CHECK_MS = 10000; // every 10 seconds
 
 playButton.addEventListener("click", async () => {
   clearExistingTimers();
@@ -28,10 +23,10 @@ playButton.addEventListener("click", async () => {
   }
 
   try {
-    // Required by some browsers to unlock audio playback
+    // Unlock audio with a direct user gesture
     await audio.play();
     audio.pause();
-    audio.currentTime = 0;
+    audio.load();
   } catch (err) {
     console.error(err);
     setStatus("Audio could not be initialized. Try again.");
@@ -48,7 +43,6 @@ playButton.addEventListener("click", async () => {
 });
 
 function parseUtcInput(value) {
-  // Treat the datetime-local input as UTC
   return new Date(value + "Z").getTime();
 }
 
@@ -70,69 +64,58 @@ function waitUntilStart() {
 }
 
 function beginPlayback(initialOffsetSeconds) {
-  const startAt = Math.max(0, initialOffsetSeconds);
+  const desiredStart = Math.max(0, initialOffsetSeconds);
 
-  const startNow = () => {
-    if (!Number.isNaN(audio.duration) && startAt >= audio.duration) {
-      setStatus("The track has already finished.");
-      return;
+  const startNow = async () => {
+    try {
+      if (!Number.isNaN(audio.duration) && desiredStart >= audio.duration) {
+        setStatus("The track has already finished.");
+        return;
+      }
+
+      audio.pause();
+      audio.currentTime = desiredStart;
+
+      if (audio.seeking) {
+        await once(audio, "seeked", 3000);
+      }
+
+      await audio.play();
+      setStatus(`Playing from ${formatTime(audio.currentTime)}.`);
+    } catch (err) {
+      console.error(err);
+      setStatus("Playback failed. Try pressing Play again.");
     }
-
-    audio.currentTime = startAt;
-    audio.playbackRate = 1.0;
-
-    audio.play()
-      .then(() => {
-        setStatus(`Playing from ${formatTime(audio.currentTime)}.`);
-        startSyncLoop();
-      })
-      .catch((err) => {
-        console.error(err);
-        setStatus("Playback failed. Try pressing Play again.");
-      });
   };
 
-  // If metadata is already loaded, start immediately.
-  // Otherwise wait until duration/currentTime seeking is reliable.
-  if (audio.readyState >= 1) {
+  if (audio.readyState >= 3) {
     startNow();
   } else {
-    audio.addEventListener("loadedmetadata", startNow, { once: true });
+    setStatus("Buffering audio...");
+    audio.addEventListener("canplay", startNow, { once: true });
   }
 }
 
-function startSyncLoop() {
-  if (syncInterval) clearInterval(syncInterval);
+function once(el, eventName, timeoutMs = 3000) {
+  return new Promise((resolve) => {
+    let done = false;
 
-  syncInterval = setInterval(() => {
-    if (!startTimestampMs || audio.paused || audio.ended) return;
+    const finish = () => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      el.removeEventListener(eventName, onEvent);
+      resolve();
+    };
 
-    const expectedTime = (Date.now() - startTimestampMs) / 1000;
-    const actualTime = audio.currentTime;
-    const drift = expectedTime - actualTime;
+    const onEvent = () => finish();
+    const timer = setTimeout(finish, timeoutMs);
 
-    if (!Number.isNaN(audio.duration) && expectedTime >= audio.duration) {
-      setStatus("Track complete.");
-      clearExistingTimers();
-      return;
-    }
-
-    // Only jump if badly out of sync
-    if (Math.abs(drift) >= HARD_CORRECT_THRESHOLD) {
-      audio.currentTime = Math.max(0, expectedTime);
-      setStatus(`Resynced to ${formatTime(audio.currentTime)}.`);
-    } else {
-      setStatus(`In sync at ${formatTime(actualTime)}.`);
-    }
-  }, SYNC_CHECK_MS);
+    el.addEventListener(eventName, onEvent, { once: true });
+  });
 }
 
 function clearExistingTimers() {
-  if (syncInterval) {
-    clearInterval(syncInterval);
-    syncInterval = null;
-  }
-
   if (countdownTimer) {
     clearTimeout(countdownTimer);
     countdownTimer = null;
@@ -158,6 +141,10 @@ function formatTime(seconds) {
 
 audio.addEventListener("loadedmetadata", () => {
   setStatus(`Track loaded. Duration: ${formatTime(audio.duration)}.`);
+});
+
+audio.addEventListener("waiting", () => {
+  setStatus("Waiting for more audio data...");
 });
 
 audio.addEventListener("ended", () => {
