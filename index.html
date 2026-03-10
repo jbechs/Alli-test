@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Alli Test - Simple Synced Player</title>
+  <title>Alli Test - Stable Direct Player</title>
   <style>
     body {
       margin: 0;
@@ -60,6 +60,7 @@
     <label for="startTime">Start Time (UTC)</label>
     <input id="startTime" type="datetime-local" step="1" />
 
+    <button id="loadButton">Load Audio</button>
     <button id="playButton">Play</button>
     <button id="stopButton">Stop</button>
 
@@ -73,6 +74,7 @@
 
   <script>
     const audio = document.getElementById("audio");
+    const loadButton = document.getElementById("loadButton");
     const playButton = document.getElementById("playButton");
     const stopButton = document.getElementById("stopButton");
     const startTimeInput = document.getElementById("startTime");
@@ -80,11 +82,34 @@
 
     let countdownTimer = null;
     let startTimestampMs = null;
+    let audioLoaded = false;
 
-    console.log("SIMPLE PLAYER LOADED");
+    console.log("STABLE DIRECT PLAYER LOADED");
+
+    loadButton.addEventListener("click", async () => {
+      try {
+        audioLoaded = false;
+        setStatus("Loading audio...");
+
+        audio.load();
+
+        await waitForLoad(audio, 20000);
+
+        audioLoaded = true;
+        setStatus(`Audio loaded.\nDuration: ${formatTime(audio.duration || 0)}.`);
+      } catch (err) {
+        console.error("LOAD FAILED:", err);
+        setStatus(`Load failed: ${err.message}`);
+      }
+    });
 
     playButton.addEventListener("click", async () => {
       clearExistingTimers();
+
+      if (!audioLoaded) {
+        setStatus("Load audio first.");
+        return;
+      }
 
       const inputValue = startTimeInput.value;
       if (!inputValue) {
@@ -100,7 +125,7 @@
       }
 
       try {
-        // wake up / unlock audio
+        // unlock / warm up
         await audio.play();
         audio.pause();
       } catch (err) {
@@ -147,10 +172,6 @@
       try {
         const offset = Math.max(0, initialOffsetSeconds);
 
-        setStatus("Preparing playback...");
-
-        await ensureMetadata(audio);
-
         if (!Number.isNaN(audio.duration) && offset >= audio.duration) {
           setStatus("The track has already finished.");
           return;
@@ -158,87 +179,75 @@
 
         audio.pause();
 
-        if (audio.readyState < 2) {
-          setStatus("Waiting for enough audio data...");
-          await ensureCanPlay(audio);
+        // If supported, this is often gentler than raw currentTime seeking
+        if (typeof audio.fastSeek === "function") {
+          try {
+            audio.fastSeek(offset);
+          } catch (err) {
+            audio.currentTime = offset;
+          }
+        } else {
+          audio.currentTime = offset;
         }
 
-        audio.currentTime = offset;
         await waitForSeekIfNeeded(audio, 3000);
+
+        // small beat for the browser to settle after seek
+        await delay(150);
 
         await audio.play();
         setStatus(`Playing from ${formatTime(audio.currentTime)}.`);
       } catch (err) {
-        console.error("Playback failed:", err);
+        console.error("PLAYBACK FAILED:", err);
         setStatus(`Playback failed: ${err.message}`);
       }
     }
 
-    function ensureMetadata(el) {
+    function waitForLoad(el, timeoutMs = 20000) {
       return new Promise((resolve, reject) => {
-        if (el.readyState >= 1) {
+        if (el.readyState >= 3) {
           resolve();
           return;
         }
 
-        const onLoaded = () => {
+        let done = false;
+
+        const finish = () => {
+          if (done) return;
+          done = true;
           cleanup();
           resolve();
         };
 
+        const fail = () => {
+          if (done) return;
+          done = true;
+          cleanup();
+          reject(new Error("audio loading timeout"));
+        };
+
         const onError = () => {
+          if (done) return;
+          done = true;
           cleanup();
           reject(new Error(describeMediaError(el)));
         };
 
-        const timer = setTimeout(() => {
-          cleanup();
-          reject(new Error("metadata timeout"));
-        }, 15000);
-
-        function cleanup() {
+        const cleanup = () => {
           clearTimeout(timer);
-          el.removeEventListener("loadedmetadata", onLoaded);
+          el.removeEventListener("loadedmetadata", finish);
+          el.removeEventListener("loadeddata", finish);
+          el.removeEventListener("canplay", finish);
+          el.removeEventListener("canplaythrough", finish);
           el.removeEventListener("error", onError);
-        }
-
-        el.addEventListener("loadedmetadata", onLoaded, { once: true });
-        el.addEventListener("error", onError, { once: true });
-        el.load();
-      });
-    }
-
-    function ensureCanPlay(el) {
-      return new Promise((resolve, reject) => {
-        if (el.readyState >= 2) {
-          resolve();
-          return;
-        }
-
-        const onReady = () => {
-          cleanup();
-          resolve();
         };
 
-        const onError = () => {
-          cleanup();
-          reject(new Error(describeMediaError(el)));
-        };
+        const timer = setTimeout(fail, timeoutMs);
 
-        const timer = setTimeout(() => {
-          cleanup();
-          reject(new Error("buffering timeout"));
-        }, 20000);
-
-        function cleanup() {
-          clearTimeout(timer);
-          el.removeEventListener("loadeddata", onReady);
-          el.removeEventListener("canplay", onReady);
-          el.removeEventListener("error", onError);
-        }
-
-        el.addEventListener("loadeddata", onReady, { once: true });
-        el.addEventListener("canplay", onReady, { once: true });
+        el.addEventListener("loadedmetadata", finish, { once: true });
+        el.addEventListener("loadeddata", finish, { once: true });
+        el.addEventListener("canplay", finish, { once: true });
+        el.addEventListener("canplaythrough", finish, { once: true });
         el.addEventListener("error", onError, { once: true });
       });
     }
@@ -250,22 +259,18 @@
           return;
         }
 
-        const onSeeked = () => {
-          cleanup();
+        let done = false;
+
+        const finish = () => {
+          if (done) return;
+          done = true;
+          clearTimeout(timer);
+          el.removeEventListener("seeked", finish);
           resolve();
         };
 
-        const timer = setTimeout(() => {
-          cleanup();
-          resolve();
-        }, timeoutMs);
-
-        function cleanup() {
-          clearTimeout(timer);
-          el.removeEventListener("seeked", onSeeked);
-        }
-
-        el.addEventListener("seeked", onSeeked, { once: true });
+        const timer = setTimeout(finish, timeoutMs);
+        el.addEventListener("seeked", finish, { once: true });
       });
     }
 
@@ -276,6 +281,10 @@
       if (code === 3) return "decode error";
       if (code === 4) return "source not supported";
       return "audio error";
+    }
+
+    function delay(ms) {
+      return new Promise(resolve => setTimeout(resolve, ms));
     }
 
     function clearExistingTimers() {
@@ -315,12 +324,16 @@
       console.log("EVENT: canplay");
     });
 
-    audio.addEventListener("waiting", () => {
-      setStatus("Playback is waiting for data...");
+    audio.addEventListener("canplaythrough", () => {
+      console.log("EVENT: canplaythrough");
     });
 
     audio.addEventListener("stalled", () => {
-      setStatus("Playback stalled.");
+      console.log("EVENT: stalled");
+    });
+
+    audio.addEventListener("waiting", () => {
+      console.log("EVENT: waiting");
     });
 
     audio.addEventListener("ended", () => {
