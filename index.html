@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Alli Test - Buffered Audio Player</title>
+  <title>Alli Test - Direct Audio Player</title>
   <style>
     body {
       margin: 0;
@@ -46,6 +46,11 @@
       min-height: 2.5em;
       color: #ccc;
     }
+
+    audio {
+      width: 100%;
+      margin-top: 8px;
+    }
   </style>
 </head>
 <body>
@@ -60,7 +65,7 @@
 
     <div id="status" class="status">Not loaded.</div>
 
-    <audio id="audio" playsinline preload="auto"></audio>
+    <audio id="audio" playsinline preload="metadata" controls></audio>
   </main>
 
   <script>
@@ -72,42 +77,21 @@
 
     const AUDIO_URL = "audio/track.mp3";
 
-    let blobUrl = null;
     let fileLoaded = false;
     let countdownTimer = null;
     let startTimestampMs = null;
 
-    console.log("INLINE SCRIPT LOADED");
+    console.log("DIRECT AUDIO TEST LOADED");
 
     loadButton.addEventListener("click", async () => {
-      console.log("Load button clicked");
       try {
         fileLoaded = false;
+        setStatus("Loading audio directly...");
 
-        if (blobUrl) {
-          URL.revokeObjectURL(blobUrl);
-          blobUrl = null;
-        }
-
-        setStatus("Downloading audio file...");
-
-        const response = await fetch(AUDIO_URL, { cache: "no-store" });
-        console.log("fetch status:", response.status);
-
-        if (!response.ok) {
-          throw new Error(`HTTP ${response.status}`);
-        }
-
-        const blob = await response.blob();
-        console.log("blob size:", blob.size, "type:", blob.type);
-
-        setStatus(`Downloaded ${Math.round(blob.size / 1024)} KB. Preparing audio...`);
-
-        blobUrl = URL.createObjectURL(blob);
-        audio.src = blobUrl;
+        audio.src = AUDIO_URL;
         audio.load();
 
-        await waitForReady(audio, 5000);
+        await waitForReady(audio, 8000);
 
         fileLoaded = true;
         setStatus(`Audio loaded. Duration: ${formatTime(audio.duration || 0)}.`);
@@ -118,8 +102,6 @@
     });
 
     playButton.addEventListener("click", async () => {
-      console.log("Play button clicked");
-
       clearExistingTimers();
 
       if (!fileLoaded) {
@@ -141,7 +123,7 @@
       }
 
       try {
-        // unlock audio on iPhone
+        // unlock audio for stricter browsers
         await audio.play();
         audio.pause();
       } catch (err) {
@@ -202,7 +184,7 @@
       }
     }
 
-    function waitForReady(el, timeoutMs = 5000) {
+    function waitForReady(el, timeoutMs = 8000) {
       return new Promise((resolve, reject) => {
         if (el.readyState >= 1) {
           resolve();
@@ -228,8 +210,8 @@
         const cleanup = () => {
           clearTimeout(timer);
           el.removeEventListener("loadedmetadata", finish);
-          el.removeEventListener("canplay", finish);
           el.removeEventListener("loadeddata", finish);
+          el.removeEventListener("canplay", finish);
           el.removeEventListener("error", onError);
         };
 
@@ -237,14 +219,23 @@
           if (done) return;
           done = true;
           cleanup();
-          reject(new Error("audio element error"));
+
+          let code = el.error ? el.error.code : null;
+          let message = "audio element error";
+
+          if (code === 1) message = "audio aborted";
+          if (code === 2) message = "network error";
+          if (code === 3) message = "decode error";
+          if (code === 4) message = "source not supported";
+
+          reject(new Error(message));
         };
 
         const timer = setTimeout(fail, timeoutMs);
 
         el.addEventListener("loadedmetadata", finish, { once: true });
-        el.addEventListener("canplay", finish, { once: true });
         el.addEventListener("loadeddata", finish, { once: true });
+        el.addEventListener("canplay", finish, { once: true });
         el.addEventListener("error", onError, { once: true });
       });
     }
@@ -325,7 +316,10 @@
     });
 
     audio.addEventListener("error", () => {
-      console.log("AUDIO ERROR:", audio.error);
+      console.log("AUDIO ERROR OBJECT:", audio.error);
+      if (audio.error) {
+        console.log("AUDIO ERROR CODE:", audio.error.code);
+      }
     });
   </script>
 </body>
