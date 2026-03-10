@@ -6,7 +6,7 @@ const audio = document.getElementById("audio");
 
 console.log("player.js loaded");
 
-const AUDIO_URL = "audio/track.m4a"; // change if needed
+const AUDIO_URL = "audio/track.mp3"; // change if needed
 
 let blobUrl = null;
 let fileLoaded = false;
