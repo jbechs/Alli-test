@@ -1,14 +1,47 @@
-const audio = document.getElementById("audio");
+const loadButton = document.getElementById("loadButton");
 const playButton = document.getElementById("playButton");
 const startTimeInput = document.getElementById("startTime");
 const statusEl = document.getElementById("status");
 
+let audioCtx = null;
+let audioBuffer = null;
+let sourceNode = null;
 let countdownTimer = null;
 let startTimestampMs = null;
-let pendingStart = false;
+
+const AUDIO_URL = "audio/track.m4a"; // or track.mp3, but m4a/aac is preferable
+
+loadButton.addEventListener("click", async () => {
+  try {
+    if (!audioCtx) {
+      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    }
+
+    setStatus("Loading audio file...");
+    const response = await fetch(AUDIO_URL, { cache: "no-store" });
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+
+    const arrayBuffer = await response.arrayBuffer();
+    setStatus("Decoding audio...");
+    audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
+
+    setStatus(`Loaded. Duration: ${formatTime(audioBuffer.duration)}.`);
+  } catch (err) {
+    console.error(err);
+    setStatus("Failed to load/decode audio.");
+  }
+});
 
 playButton.addEventListener("click", async () => {
   clearExistingTimers();
+
+  if (!audioBuffer) {
+    setStatus("Load audio first.");
+    return;
+  }
 
   const inputValue = startTimeInput.value;
   if (!inputValue) {
@@ -17,18 +50,21 @@ playButton.addEventListener("click", async () => {
   }
 
   startTimestampMs = parseUtcInput(inputValue);
+
   if (Number.isNaN(startTimestampMs)) {
     setStatus("Invalid time format.");
     return;
   }
 
+  if (!audioCtx) {
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  }
+
   try {
-    // Unlock media on iPhone with direct user gesture
-    await audio.play();
-    audio.pause();
+    await audioCtx.resume();
   } catch (err) {
     console.error(err);
-    setStatus("Audio could not be initialized. Try again.");
+    setStatus("Audio context could not resume.");
     return;
   }
 
@@ -62,114 +98,36 @@ function waitUntilStart() {
   tick();
 }
 
-async function beginPlayback(initialOffsetSeconds) {
-  if (pendingStart) return;
-  pendingStart = true;
+function beginPlayback(initialOffsetSeconds) {
+  stopCurrentSource();
 
-  try {
-    const desiredStart = Math.max(0, initialOffsetSeconds);
+  const offset = Math.max(0, initialOffsetSeconds);
 
-    await ensureMetadata();
-
-    if (!Number.isNaN(audio.duration) && desiredStart >= audio.duration) {
-      setStatus("The track has already finished.");
-      pendingStart = false;
-      return;
-    }
-
-    // Seek once
-    audio.currentTime = desiredStart;
-    await once(audio, "seeked", 4000);
-
-    // Wait until the desired point is actually inside a buffered range
-    await waitForBufferedAt(desiredStart, 6000);
-
-    await audio.play();
-    setStatus(`Playing from ${formatTime(audio.currentTime)}.`);
-  } catch (err) {
-    console.error(err);
-    setStatus("Playback failed or audio was not buffered enough.");
-  } finally {
-    pendingStart = false;
+  if (offset >= audioBuffer.duration) {
+    setStatus("The track has already finished.");
+    return;
   }
+
+  sourceNode = audioCtx.createBufferSource();
+  sourceNode.buffer = audioBuffer;
+  sourceNode.connect(audioCtx.destination);
+
+  sourceNode.onended = () => {
+    setStatus("Playback ended.");
+  };
+
+  sourceNode.start(0, offset);
+  setStatus(`Playing from ${formatTime(offset)}.`);
 }
 
-function ensureMetadata() {
-  return new Promise((resolve) => {
-    if (audio.readyState >= 1) {
-      resolve();
-      return;
-    }
-
-    const done = () => {
-      audio.removeEventListener("loadedmetadata", done);
-      resolve();
-    };
-
-    audio.addEventListener("loadedmetadata", done, { once: true });
-  });
-}
-
-function waitForBufferedAt(time, timeoutMs = 6000) {
-  return new Promise((resolve, reject) => {
-    const start = Date.now();
-
-    const check = () => {
-      if (isTimeBuffered(time)) {
-        resolve();
-        return;
-      }
-
-      if (Date.now() - start > timeoutMs) {
-        reject(new Error("Timed out waiting for buffer"));
-        return;
-      }
-
-      setStatus(`Buffering near ${formatTime(time)}...`);
-      setTimeout(check, 200);
-    };
-
-    check();
-  });
-}
-
-function isTimeBuffered(time) {
-  const ranges = audio.buffered;
-  for (let i = 0; i < ranges.length; i++) {
-    const start = ranges.start(i);
-    const end = ranges.end(i);
-    if (time >= start && time <= end - 0.05) {
-      return true;
-    }
+function stopCurrentSource() {
+  if (sourceNode) {
+    try {
+      sourceNode.stop();
+    } catch (_) {}
+    sourceNode.disconnect();
+    sourceNode = null;
   }
-  return false;
-}
-
-function once(el, eventName, timeoutMs = 4000) {
-  return new Promise((resolve, reject) => {
-    let done = false;
-
-    const finish = () => {
-      if (done) return;
-      done = true;
-      clearTimeout(timer);
-      el.removeEventListener(eventName, onEvent);
-      resolve();
-    };
-
-    const fail = () => {
-      if (done) return;
-      done = true;
-      clearTimeout(timer);
-      el.removeEventListener(eventName, onEvent);
-      reject(new Error(`${eventName} timeout`));
-    };
-
-    const onEvent = () => finish();
-    const timer = setTimeout(fail, timeoutMs);
-
-    el.addEventListener(eventName, onEvent, { once: true });
-  });
 }
 
 function clearExistingTimers() {
@@ -195,16 +153,3 @@ function formatTime(seconds) {
 
   return `${mins}:${String(secs).padStart(2, "0")}`;
 }
-
-audio.addEventListener("loadedmetadata", () => {
-  setStatus(`Track loaded. Duration: ${formatTime(audio.duration)}.`);
-});
-
-audio.addEventListener("waiting", () => {
-  setStatus("Waiting for more audio data...");
-});
-
-audio.addEventListener("ended", () => {
-  setStatus("Playback ended.");
-  clearExistingTimers();
-});
