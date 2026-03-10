@@ -1,6 +1,28 @@
-Alli-test/
-  index.html
-  style.css
-  player.js
-  audio/
-    track.mp3
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Alli Test - UTC Synced Audio</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <main class="container">
+    <h1>UTC Synced Audio Player</h1>
+
+    <label for="startTime">Start Time (UTC)</label>
+    <input id="startTime" type="datetime-local" step="1" />
+
+    <button id="playButton">Play</button>
+
+    <div id="status" class="status">Waiting to start.</div>
+
+    <audio id="audio" preload="auto" playsinline>
+      <source src="audio/track.mp3" type="audio/mpeg" />
+      Your browser does not support HTML5 audio.
+    </audio>
+  </main>
+
+  <script src="player.js"></script>
+</body>
+</html>
