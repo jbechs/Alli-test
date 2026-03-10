@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Alli Test - Buffer Player</title>
+  <title>Alli Test - Buffered Audio Player</title>
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
@@ -17,6 +17,8 @@
     <button id="playButton">Play</button>
 
     <div id="status" class="status">Not loaded.</div>
+
+    <audio id="audio" playsinline preload="auto"></audio>
   </main>
 
   <script src="player.js"></script>
