@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Alli Test - Direct Audio Player</title>
+  <title>Alli Test - Minimal Synced Player</title>
   <style>
     body {
       margin: 0;
@@ -50,7 +50,6 @@
 
     audio {
       width: 100%;
-      margin-top: 8px;
     }
   </style>
 </head>
@@ -61,71 +60,29 @@
     <label for="startTime">Start Time (UTC)</label>
     <input id="startTime" type="datetime-local" step="1" />
 
-    <button id="loadButton">Load Audio</button>
     <button id="playButton">Play</button>
 
-    <div id="status" class="status">Not loaded.</div>
+    <div id="status" class="status">Ready.</div>
 
-    <audio id="audio" playsinline preload="metadata" controls></audio>
+    <audio id="audio" controls preload="metadata" playsinline>
+      <source src="audio/track.mp3" type="audio/mpeg" />
+      Your browser does not support audio playback.
+    </audio>
   </main>
 
   <script>
-    const loadButton = document.getElementById("loadButton");
+    const audio = document.getElementById("audio");
     const playButton = document.getElementById("playButton");
     const startTimeInput = document.getElementById("startTime");
     const statusEl = document.getElementById("status");
-    const audio = document.getElementById("audio");
 
-    // IMPORTANT: absolute path for GitHub Pages project site
-    const AUDIO_URL = "/Alli-test/audio/track.mp3";
-
-    let fileLoaded = false;
     let countdownTimer = null;
     let startTimestampMs = null;
 
-    console.log("DIRECT AUDIO TEST LOADED");
-    console.log("AUDIO_URL:", AUDIO_URL);
-
-    loadButton.addEventListener("click", async () => {
-      try {
-        fileLoaded = false;
-
-        const mp3Support = audio.canPlayType("audio/mpeg");
-        console.log("canPlayType(audio/mpeg):", mp3Support);
-
-        setStatus(
-          "Loading audio directly...\n" +
-          `MP3 support check: ${mp3Support || "empty string"}`
-        );
-
-        audio.innerHTML = "";
-        const source = document.createElement("source");
-        source.src = AUDIO_URL;
-        source.type = "audio/mpeg";
-        audio.appendChild(source);
-
-        audio.load();
-
-        await waitForReady(audio, 8000);
-
-        fileLoaded = true;
-        setStatus(
-          `Audio loaded.\nDuration: ${formatTime(audio.duration || 0)}\n` +
-          `Current src: ${audio.currentSrc || AUDIO_URL}`
-        );
-      } catch (err) {
-        console.error("Load failed:", err);
-        setStatus(`Load failed: ${err.message}`);
-      }
-    });
+    console.log("MINIMAL PLAYER LOADED");
 
     playButton.addEventListener("click", async () => {
       clearExistingTimers();
-
-      if (!fileLoaded) {
-        setStatus("Load audio first.");
-        return;
-      }
 
       const inputValue = startTimeInput.value;
       if (!inputValue) {
@@ -141,12 +98,11 @@
       }
 
       try {
+        // wake up / unlock audio
         await audio.play();
         audio.pause();
       } catch (err) {
-        console.error(err);
-        setStatus("Audio could not be initialized. Try again.");
-        return;
+        console.error("Initial audio unlock failed:", err);
       }
 
       const offsetSeconds = (Date.now() - startTimestampMs) / 1000;
@@ -188,6 +144,11 @@
           return;
         }
 
+        if (audio.readyState < 1) {
+          setStatus("Waiting for metadata...");
+          await waitForMetadata(audio, 5000);
+        }
+
         audio.pause();
         audio.currentTime = offset;
 
@@ -196,12 +157,12 @@
         await audio.play();
         setStatus(`Playing from ${formatTime(audio.currentTime)}.`);
       } catch (err) {
-        console.error(err);
+        console.error("Playback failed:", err);
         setStatus(`Playback failed: ${err.message}`);
       }
     }
 
-    function waitForReady(el, timeoutMs = 8000) {
+    function waitForMetadata(el, timeoutMs = 5000) {
       return new Promise((resolve, reject) => {
         if (el.readyState >= 1) {
           resolve();
@@ -221,14 +182,12 @@
           if (done) return;
           done = true;
           cleanup();
-          reject(new Error("audio readiness timeout"));
+          reject(new Error("metadata timeout"));
         };
 
         const cleanup = () => {
           clearTimeout(timer);
           el.removeEventListener("loadedmetadata", finish);
-          el.removeEventListener("loadeddata", finish);
-          el.removeEventListener("canplay", finish);
           el.removeEventListener("error", onError);
         };
 
@@ -238,8 +197,7 @@
           cleanup();
 
           let code = el.error ? el.error.code : null;
-          let message = "audio element error";
-
+          let message = "audio error";
           if (code === 1) message = "audio aborted";
           if (code === 2) message = "network error";
           if (code === 3) message = "decode error";
@@ -251,8 +209,6 @@
         const timer = setTimeout(fail, timeoutMs);
 
         el.addEventListener("loadedmetadata", finish, { once: true });
-        el.addEventListener("loadeddata", finish, { once: true });
-        el.addEventListener("canplay", finish, { once: true });
         el.addEventListener("error", onError, { once: true });
       });
     }
@@ -308,16 +264,8 @@
       console.log("EVENT: loadedmetadata", audio.duration);
     });
 
-    audio.addEventListener("loadeddata", () => {
-      console.log("EVENT: loadeddata");
-    });
-
     audio.addEventListener("canplay", () => {
       console.log("EVENT: canplay");
-    });
-
-    audio.addEventListener("canplaythrough", () => {
-      console.log("EVENT: canplaythrough");
     });
 
     audio.addEventListener("waiting", () => {
@@ -335,9 +283,6 @@
     audio.addEventListener("error", () => {
       console.log("AUDIO ERROR OBJECT:", audio.error);
       console.log("AUDIO currentSrc:", audio.currentSrc);
-      console.log("AUDIO networkState:", audio.networkState);
-      console.log("AUDIO readyState:", audio.readyState);
-
       if (audio.error) {
         console.log("AUDIO ERROR CODE:", audio.error.code);
       }
