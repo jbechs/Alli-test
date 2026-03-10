@@ -3,8 +3,53 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Alli Test - UTC Synced Audio</title>
-  <link rel="stylesheet" href="style.css" />
+  <title>UTC Synced Audio Player</title>
+  <style>
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      background: #111;
+      color: #fff;
+      font-family: Arial, sans-serif;
+    }
+
+    .container {
+      width: min(90vw, 420px);
+      text-align: center;
+      display: grid;
+      gap: 14px;
+    }
+
+    input, button {
+      font-size: 1rem;
+      padding: 12px;
+      border-radius: 8px;
+      border: none;
+    }
+
+    input {
+      background: #222;
+      color: #fff;
+    }
+
+    button {
+      background: #fff;
+      color: #111;
+      cursor: pointer;
+      font-weight: bold;
+    }
+
+    button:active {
+      transform: scale(0.98);
+    }
+
+    .status {
+      min-height: 2.5em;
+      color: #ccc;
+    }
+  </style>
 </head>
 <body>
   <main class="container">
@@ -13,16 +58,59 @@
     <label for="startTime">Start Time (UTC)</label>
     <input id="startTime" type="datetime-local" step="1" />
 
-    <button id="playButton">Play</button>
+    <button id="playButton" type="button">Play</button>
 
-    <div id="status" class="status">Waiting to start.</div>
+    <div id="status" class="status">Page loaded.</div>
 
     <audio id="audio" preload="auto" playsinline>
       <source src="audio/track.mp3" type="audio/mpeg" />
-      Your browser does not support HTML5 audio.
     </audio>
   </main>
 
-  <script src="player.js"></script>
+  <script>
+    const audio = document.getElementById("audio");
+    const playButton = document.getElementById("playButton");
+    const startTimeInput = document.getElementById("startTime");
+    const statusEl = document.getElementById("status");
+
+    statusEl.textContent = "JavaScript loaded.";
+
+    playButton.addEventListener("click", async () => {
+      statusEl.textContent = "Button clicked.";
+
+      const inputValue = startTimeInput.value;
+      if (!inputValue) {
+        statusEl.textContent = "Please enter a UTC start time.";
+        return;
+      }
+
+      const startTimestampMs = new Date(inputValue + "Z").getTime();
+      if (Number.isNaN(startTimestampMs)) {
+        statusEl.textContent = "Invalid time.";
+        return;
+      }
+
+      try {
+        audio.load();
+        const now = Date.now();
+        const offsetSeconds = Math.max(0, (now - startTimestampMs) / 1000);
+
+        statusEl.textContent = `Trying playback at ${offsetSeconds.toFixed(1)}s...`;
+
+        audio.currentTime = offsetSeconds;
+        await audio.play();
+
+        statusEl.textContent = `Playing from ${audio.currentTime.toFixed(1)}s`;
+      } catch (err) {
+        console.error(err);
+        statusEl.textContent = "Playback failed. Check audio path / browser console.";
+      }
+    });
+
+    audio.addEventListener("error", () => {
+      console.error("Audio error:", audio.error);
+      statusEl.textContent = "Audio file not found or could not load.";
+    });
+  </script>
 </body>
 </html>
