@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>UTC Audio Test</title>
+  <title>Local Time Audio Test</title>
   <style>
     body {
       margin: 0;
@@ -52,6 +52,7 @@
       font-size: 13px;
       color: #999;
       line-height: 1.4;
+      white-space: pre-wrap;
     }
 
     audio {
@@ -61,14 +62,14 @@
 </head>
 <body>
   <div class="container">
-    <h1>UTC Audio Test</h1>
+    <h1>Local Time Audio Test</h1>
 
-    <div class="small">Current UTC: <span id="utcNow">--:--:--</span></div>
+    <div class="small">Current Local Time: <span id="localNow">--:--:--</span></div>
 
-    <label for="utcTime">Start Time (UTC, HH:MM:SS)</label>
-    <input id="utcTime" type="text" placeholder="03:51:30" />
+    <label for="localTime">Start Time (Local, HH:MM:SS)</label>
+    <input id="localTime" type="text" placeholder="00:09:20" />
 
-    <button id="playButton" type="button">Play From UTC Time</button>
+    <button id="playButton" type="button">Play From Local Time</button>
     <button id="startNowButton" type="button">Play From Start</button>
     <button id="fill30Button" type="button">Set Start to 30 Sec Ago</button>
 
@@ -85,8 +86,8 @@
     const playButton = document.getElementById("playButton");
     const startNowButton = document.getElementById("startNowButton");
     const fill30Button = document.getElementById("fill30Button");
-    const utcTimeInput = document.getElementById("utcTime");
-    const utcNowEl = document.getElementById("utcNow");
+    const localTimeInput = document.getElementById("localTime");
+    const localNowEl = document.getElementById("localNow");
     const status = document.getElementById("status");
     const debug = document.getElementById("debug");
 
@@ -102,15 +103,15 @@
       return String(n).padStart(2, "0");
     }
 
-    function getUtcHMS(date = new Date()) {
-      return `${pad(date.getUTCHours())}:${pad(date.getUTCMinutes())}:${pad(date.getUTCSeconds())}`;
+    function getLocalHMS(date = new Date()) {
+      return `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
     }
 
-    function updateUtcClock() {
-      utcNowEl.textContent = getUtcHMS();
+    function updateLocalClock() {
+      localNowEl.textContent = getLocalHMS();
     }
 
-    function parseUtcTimeToday(hms) {
+    function parseLocalTimeToday(hms) {
       const match = hms.trim().match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
       if (!match) return NaN;
 
@@ -127,14 +128,14 @@
       }
 
       const now = new Date();
-      return Date.UTC(
-        now.getUTCFullYear(),
-        now.getUTCMonth(),
-        now.getUTCDate(),
+      return new Date(
+        now.getFullYear(),
+        now.getMonth(),
+        now.getDate(),
         hours,
         minutes,
         seconds
-      );
+      ).getTime();
     }
 
     function updateDebug(extra = "") {
@@ -179,24 +180,24 @@
 
     fill30Button.addEventListener("click", () => {
       const d = new Date(Date.now() - 30000);
-      utcTimeInput.value = getUtcHMS(d);
-      status.textContent = "Set start time to 30 seconds ago in UTC.";
+      localTimeInput.value = getLocalHMS(d);
+      status.textContent = "Set start time to 30 seconds ago in local time.";
     });
 
     playButton.addEventListener("click", async () => {
-      const inputValue = utcTimeInput.value;
+      const inputValue = localTimeInput.value;
 
       if (!inputValue) {
-        status.textContent = "Please enter a UTC time.";
+        status.textContent = "Please enter a local time.";
         updateDebug();
         return;
       }
 
-      const startTimestampMs = parseUtcTimeToday(inputValue);
+      const startTimestampMs = parseLocalTimeToday(inputValue);
       const nowMs = Date.now();
 
       if (Number.isNaN(startTimestampMs)) {
-        status.textContent = "Invalid UTC time. Use HH:MM:SS.";
+        status.textContent = "Invalid local time. Use HH:MM:SS.";
         updateDebug();
         return;
       }
@@ -204,8 +205,8 @@
       const offsetSeconds = (nowMs - startTimestampMs) / 1000;
 
       updateDebug(
-        `Now (UTC): ${new Date(nowMs).toISOString()}\n` +
-        `Entered start today (UTC): ${new Date(startTimestampMs).toISOString()}\n` +
+        `Now (local): ${new Date(nowMs).toString()}\n` +
+        `Entered start today (local): ${new Date(startTimestampMs).toString()}\n` +
         `Calculated offset: ${offsetSeconds.toFixed(1)}s (${fmt(offsetSeconds)})`
       );
 
@@ -215,7 +216,7 @@
       }
 
       if (offsetSeconds < 0) {
-        status.textContent = "That UTC time is in the future.";
+        status.textContent = "That local time is in the future.";
         return;
       }
 
@@ -234,8 +235,8 @@
       }
     });
 
-    updateUtcClock();
-    setInterval(updateUtcClock, 500);
+    updateLocalClock();
+    setInterval(updateLocalClock, 500);
   </script>
 </body>
 </html>
