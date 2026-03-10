@@ -7,11 +7,9 @@ let syncInterval = null;
 let countdownTimer = null;
 let startTimestampMs = null;
 
-const SOFT_CORRECT_THRESHOLD = 0.15; // seconds
-const HARD_CORRECT_THRESHOLD = 1.0;  // seconds
-const MAX_PLAYBACK_RATE_ADJUST = 0.02; // ±2%
-const SYNC_CHECK_MS = 3000;
-const COUNTDOWN_CHECK_MS = 250;
+// Only do rare hard resyncs
+const HARD_CORRECT_THRESHOLD = 2.0; // seconds
+const SYNC_CHECK_MS = 10000; // every 10 seconds
 
 playButton.addEventListener("click", async () => {
   clearExistingTimers();
@@ -29,36 +27,28 @@ playButton.addEventListener("click", async () => {
     return;
   }
 
-  setStatus("Preparing audio...");
-
   try {
-    // Force metadata load if needed
-    audio.load();
-
-    await waitForAudioReady(audio, 5000);
-
-    const now = Date.now();
-    const offsetSeconds = (now - startTimestampMs) / 1000;
-
-    if (!Number.isNaN(audio.duration) && offsetSeconds >= audio.duration) {
-      setStatus("That start time is beyond the end of the track.");
-      return;
-    }
-
-    if (offsetSeconds < 0) {
-      setStatus("Waiting for scheduled start...");
-      waitUntilStart();
-    } else {
-      beginPlayback(offsetSeconds);
-    }
+    // Required by some browsers to unlock audio playback
+    await audio.play();
+    audio.pause();
+    audio.currentTime = 0;
   } catch (err) {
     console.error(err);
-    setStatus("Audio failed to load. Check the file path and filename.");
+    setStatus("Audio could not be initialized. Try again.");
+    return;
+  }
+
+  const offsetSeconds = (Date.now() - startTimestampMs) / 1000;
+
+  if (offsetSeconds < 0) {
+    waitUntilStart();
+  } else {
+    beginPlayback(offsetSeconds);
   }
 });
 
 function parseUtcInput(value) {
-  // Interpret entered datetime-local value as UTC
+  // Treat the datetime-local input as UTC
   return new Date(value + "Z").getTime();
 }
 
@@ -73,24 +63,41 @@ function waitUntilStart() {
 
     const totalSeconds = Math.ceil(msRemaining / 1000);
     setStatus(`Starting in ${totalSeconds} second${totalSeconds === 1 ? "" : "s"}...`);
-    countdownTimer = setTimeout(tick, COUNTDOWN_CHECK_MS);
+    countdownTimer = setTimeout(tick, 250);
   };
 
   tick();
 }
 
-async function beginPlayback(initialOffsetSeconds) {
-  try {
-    audio.currentTime = Math.max(0, initialOffsetSeconds);
+function beginPlayback(initialOffsetSeconds) {
+  const startAt = Math.max(0, initialOffsetSeconds);
+
+  const startNow = () => {
+    if (!Number.isNaN(audio.duration) && startAt >= audio.duration) {
+      setStatus("The track has already finished.");
+      return;
+    }
+
+    audio.currentTime = startAt;
     audio.playbackRate = 1.0;
 
-    await audio.play();
+    audio.play()
+      .then(() => {
+        setStatus(`Playing from ${formatTime(audio.currentTime)}.`);
+        startSyncLoop();
+      })
+      .catch((err) => {
+        console.error(err);
+        setStatus("Playback failed. Try pressing Play again.");
+      });
+  };
 
-    setStatus(`Playing from ${formatTime(audio.currentTime)}.`);
-    startSyncLoop();
-  } catch (err) {
-    console.error(err);
-    setStatus("Playback failed. Usually this means the audio file path is wrong or the browser blocked playback.");
+  // If metadata is already loaded, start immediately.
+  // Otherwise wait until duration/currentTime seeking is reliable.
+  if (audio.readyState >= 1) {
+    startNow();
+  } else {
+    audio.addEventListener("loadedmetadata", startNow, { once: true });
   }
 }
 
@@ -110,57 +117,14 @@ function startSyncLoop() {
       return;
     }
 
+    // Only jump if badly out of sync
     if (Math.abs(drift) >= HARD_CORRECT_THRESHOLD) {
       audio.currentTime = Math.max(0, expectedTime);
-      audio.playbackRate = 1.0;
-      setStatus(`Hard resync at ${formatTime(audio.currentTime)}.`);
-      return;
-    }
-
-    if (Math.abs(drift) >= SOFT_CORRECT_THRESHOLD) {
-      const correction = clamp(drift * 0.02, -MAX_PLAYBACK_RATE_ADJUST, MAX_PLAYBACK_RATE_ADJUST);
-      audio.playbackRate = 1.0 + correction;
-      setStatus(`Soft sync drift: ${drift.toFixed(2)}s`);
+      setStatus(`Resynced to ${formatTime(audio.currentTime)}.`);
     } else {
-      audio.playbackRate = 1.0;
       setStatus(`In sync at ${formatTime(actualTime)}.`);
     }
   }, SYNC_CHECK_MS);
-}
-
-function waitForAudioReady(audioEl, timeoutMs = 5000) {
-  return new Promise((resolve, reject) => {
-    if (audioEl.readyState >= 1) {
-      resolve();
-      return;
-    }
-
-    const onLoaded = () => {
-      cleanup();
-      resolve();
-    };
-
-    const onError = () => {
-      cleanup();
-      reject(new Error("Audio element reported an error while loading."));
-    };
-
-    const onTimeout = () => {
-      cleanup();
-      reject(new Error("Timed out waiting for audio metadata."));
-    };
-
-    const cleanup = () => {
-      clearTimeout(timer);
-      audioEl.removeEventListener("loadedmetadata", onLoaded);
-      audioEl.removeEventListener("error", onError);
-    };
-
-    audioEl.addEventListener("loadedmetadata", onLoaded);
-    audioEl.addEventListener("error", onError);
-
-    const timer = setTimeout(onTimeout, timeoutMs);
-  });
 }
 
 function clearExistingTimers() {
@@ -179,10 +143,6 @@ function setStatus(message) {
   statusEl.textContent = message;
 }
 
-function clamp(value, min, max) {
-  return Math.min(Math.max(value, min), max);
-}
-
 function formatTime(seconds) {
   const s = Math.max(0, Math.floor(seconds));
   const hrs = Math.floor(s / 3600);
@@ -198,11 +158,6 @@ function formatTime(seconds) {
 
 audio.addEventListener("loadedmetadata", () => {
   setStatus(`Track loaded. Duration: ${formatTime(audio.duration)}.`);
-});
-
-audio.addEventListener("error", () => {
-  console.error("Audio error:", audio.error);
-  setStatus("Audio error: file may be missing or path may be incorrect.");
 });
 
 audio.addEventListener("ended", () => {
