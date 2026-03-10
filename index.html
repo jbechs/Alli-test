@@ -45,6 +45,7 @@
     .status {
       min-height: 2.5em;
       color: #ccc;
+      white-space: pre-line;
     }
 
     audio {
@@ -75,26 +76,43 @@
     const statusEl = document.getElementById("status");
     const audio = document.getElementById("audio");
 
-    const AUDIO_URL = "audio/track.mp3";
+    // IMPORTANT: absolute path for GitHub Pages project site
+    const AUDIO_URL = "/Alli-test/audio/track.mp3";
 
     let fileLoaded = false;
     let countdownTimer = null;
     let startTimestampMs = null;
 
     console.log("DIRECT AUDIO TEST LOADED");
+    console.log("AUDIO_URL:", AUDIO_URL);
 
     loadButton.addEventListener("click", async () => {
       try {
         fileLoaded = false;
-        setStatus("Loading audio directly...");
 
-        audio.src = AUDIO_URL;
+        const mp3Support = audio.canPlayType("audio/mpeg");
+        console.log("canPlayType(audio/mpeg):", mp3Support);
+
+        setStatus(
+          "Loading audio directly...\n" +
+          `MP3 support check: ${mp3Support || "empty string"}`
+        );
+
+        audio.innerHTML = "";
+        const source = document.createElement("source");
+        source.src = AUDIO_URL;
+        source.type = "audio/mpeg";
+        audio.appendChild(source);
+
         audio.load();
 
         await waitForReady(audio, 8000);
 
         fileLoaded = true;
-        setStatus(`Audio loaded. Duration: ${formatTime(audio.duration || 0)}.`);
+        setStatus(
+          `Audio loaded.\nDuration: ${formatTime(audio.duration || 0)}\n` +
+          `Current src: ${audio.currentSrc || AUDIO_URL}`
+        );
       } catch (err) {
         console.error("Load failed:", err);
         setStatus(`Load failed: ${err.message}`);
@@ -123,7 +141,6 @@
       }
 
       try {
-        // unlock audio for stricter browsers
         await audio.play();
         audio.pause();
       } catch (err) {
@@ -317,6 +334,10 @@
 
     audio.addEventListener("error", () => {
       console.log("AUDIO ERROR OBJECT:", audio.error);
+      console.log("AUDIO currentSrc:", audio.currentSrc);
+      console.log("AUDIO networkState:", audio.networkState);
+      console.log("AUDIO readyState:", audio.readyState);
+
       if (audio.error) {
         console.log("AUDIO ERROR CODE:", audio.error.code);
       }
