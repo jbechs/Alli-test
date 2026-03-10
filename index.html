@@ -3,13 +3,19 @@
   const playButton = document.getElementById("playButton");
   const startNowButton = document.getElementById("startNowButton");
   const fill30Button = document.getElementById("fill30Button");
-  const utcTimeInput = document.getElementById("utcTime");
-  const utcNowEl = document.getElementById("utcNow");
+  const localTimeInput = document.getElementById("localTime");
+  const localNowEl = document.getElementById("localNow");
   const status = document.getElementById("status");
   const debug = document.getElementById("debug");
 
-  let scheduledTimer = null;
-  let countdownTimer = null;
+  let scheduledStartMs = null;
+  let countdownInterval = null;
+  let syncInterval = null;
+
+  const SOFT_CORRECT_THRESHOLD = 0.15; // seconds
+  const HARD_CORRECT_THRESHOLD = 1.0;  // seconds
+  const MAX_PLAYBACK_RATE_ADJUST = 0.02; // ±2%
+  const SYNC_CHECK_MS = 3000;
 
   function fmt(seconds) {
     if (!isFinite(seconds)) return "unknown";
@@ -23,15 +29,15 @@
     return String(n).padStart(2, "0");
   }
 
-  function getUtcHMS(date = new Date()) {
-    return `${pad(date.getUTCHours())}:${pad(date.getUTCMinutes())}:${pad(date.getUTCSeconds())}`;
+  function getLocalHMS(date = new Date()) {
+    return `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
   }
 
-  function updateUtcClock() {
-    utcNowEl.textContent = getUtcHMS();
+  function updateLocalClock() {
+    localNowEl.textContent = getLocalHMS();
   }
 
-  function parseUtcTimeToday(hms) {
+  function parseLocalTimeToday(hms) {
     const match = hms.trim().match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
     if (!match) return NaN;
 
@@ -48,25 +54,14 @@
     }
 
     const now = new Date();
-    return Date.UTC(
-      now.getUTCFullYear(),
-      now.getUTCMonth(),
-      now.getUTCDate(),
+    return new Date(
+      now.getFullYear(),
+      now.getMonth(),
+      now.getDate(),
       hours,
       minutes,
       seconds
-    );
-  }
-
-  function clearScheduledStart() {
-    if (scheduledTimer) {
-      clearTimeout(scheduledTimer);
-      scheduledTimer = null;
-    }
-    if (countdownTimer) {
-      clearInterval(countdownTimer);
-      countdownTimer = null;
-    }
+    ).getTime();
   }
 
   function updateDebug(extra = "") {
@@ -76,7 +71,73 @@
       extra;
   }
 
-  async function playAtOffset(offsetSeconds) {
+  function clearTimers() {
+    if (countdownInterval) {
+      clearInterval(countdownInterval);
+      countdownInterval = null;
+    }
+    if (syncInterval) {
+      clearInterval(syncInterval);
+      syncInterval = null;
+    }
+  }
+
+  function clamp(value, min, max) {
+    return Math.min(Math.max(value, min), max);
+  }
+
+  function startSyncLoop() {
+    if (syncInterval) clearInterval(syncInterval);
+
+    syncInterval = setInterval(() => {
+      if (!scheduledStartMs || audio.paused || audio.ended) return;
+
+      const expectedTime = (Date.now() - scheduledStartMs) / 1000;
+      const actualTime = audio.currentTime;
+      const drift = expectedTime - actualTime;
+
+      if (!isFinite(audio.duration)) return;
+
+      if (expectedTime >= audio.duration) {
+        status.textContent = "Playback ended.";
+        clearTimers();
+        return;
+      }
+
+      if (Math.abs(drift) >= HARD_CORRECT_THRESHOLD) {
+        audio.currentTime = Math.max(0, expectedTime);
+        audio.playbackRate = 1.0;
+        status.textContent = `Hard resync at ${fmt(audio.currentTime)}.`;
+        return;
+      }
+
+      if (Math.abs(drift) >= SOFT_CORRECT_THRESHOLD) {
+        const correction = clamp(drift * 0.02, -MAX_PLAYBACK_RATE_ADJUST, MAX_PLAYBACK_RATE_ADJUST);
+        audio.playbackRate = 1.0 + correction;
+      } else {
+        audio.playbackRate = 1.0;
+      }
+    }, SYNC_CHECK_MS);
+  }
+
+  async function armAudio() {
+    // Helps browsers treat the later scheduled play as user-initiated.
+    try {
+      audio.muted = true;
+      audio.currentTime = 0;
+      await audio.play();
+      audio.pause();
+      audio.currentTime = 0;
+      audio.muted = false;
+      return true;
+    } catch (err) {
+      console.error("Arm failed:", err);
+      audio.muted = false;
+      return false;
+    }
+  }
+
+  async function startPlaybackAt(offsetSeconds) {
     if (!isFinite(audio.duration)) {
       status.textContent = "Audio duration not ready yet.";
       return;
@@ -87,54 +148,11 @@
       return;
     }
 
-    const safeOffset = Math.max(0, offsetSeconds);
-    audio.currentTime = safeOffset;
+    audio.currentTime = Math.max(0, offsetSeconds);
+    audio.playbackRate = 1.0;
     await audio.play();
     status.textContent = `Playback started at ${audio.currentTime.toFixed(1)}s.`;
-  }
-
-  async function handleScheduledPlayback(startTimestampMs) {
-    const nowMs = Date.now();
-    const offsetSeconds = (nowMs - startTimestampMs) / 1000;
-
-    updateDebug(
-      `Now (UTC): ${new Date(nowMs).toISOString()}\n` +
-      `Entered start today (UTC): ${new Date(startTimestampMs).toISOString()}\n` +
-      `Calculated offset: ${offsetSeconds.toFixed(1)}s (${fmt(offsetSeconds)})`
-    );
-
-    if (offsetSeconds < 0) {
-      const msUntilStart = startTimestampMs - nowMs;
-      status.textContent = `Scheduled. Starts in ${(msUntilStart / 1000).toFixed(1)}s.`;
-
-      countdownTimer = setInterval(() => {
-        const remainingMs = startTimestampMs - Date.now();
-        if (remainingMs <= 0) {
-          clearScheduledStart();
-          return;
-        }
-        status.textContent = `Scheduled. Starts in ${(remainingMs / 1000).toFixed(1)}s.`;
-      }, 100);
-
-      scheduledTimer = setTimeout(async () => {
-        clearScheduledStart();
-        try {
-          await playAtOffset(0);
-          updateDebug(
-            `Now (UTC): ${new Date(Date.now()).toISOString()}\n` +
-            `Entered start today (UTC): ${new Date(startTimestampMs).toISOString()}\n` +
-            `Calculated offset: 0.0s (${fmt(0)})`
-          );
-        } catch (err) {
-          console.error(err);
-          status.textContent = "Scheduled playback failed. See browser console.";
-        }
-      }, msUntilStart);
-
-      return;
-    }
-
-    await playAtOffset(offsetSeconds);
+    startSyncLoop();
   }
 
   audio.addEventListener("loadedmetadata", () => {
@@ -155,16 +173,20 @@
 
   audio.addEventListener("ended", () => {
     status.textContent = "Playback ended.";
+    clearTimers();
     updateDebug();
   });
 
   startNowButton.addEventListener("click", async () => {
-    clearScheduledStart();
+    clearTimers();
+    scheduledStartMs = Date.now();
+
     try {
       audio.currentTime = 0;
       await audio.play();
       status.textContent = "Playing from start.";
       updateDebug();
+      startSyncLoop();
     } catch (err) {
       console.error(err);
       status.textContent = "Play from start failed.";
@@ -173,37 +195,94 @@
 
   fill30Button.addEventListener("click", () => {
     const d = new Date(Date.now() - 30000);
-    utcTimeInput.value = getUtcHMS(d);
-    status.textContent = "Set start time to 30 seconds ago in UTC.";
+    localTimeInput.value = getLocalHMS(d);
+    status.textContent = "Set start time to 30 seconds ago in local time.";
   });
 
   playButton.addEventListener("click", async () => {
-    clearScheduledStart();
+    clearTimers();
 
-    const inputValue = utcTimeInput.value;
+    const inputValue = localTimeInput.value;
 
     if (!inputValue) {
-      status.textContent = "Please enter a UTC time.";
+      status.textContent = "Please enter a local time.";
       updateDebug();
       return;
     }
 
-    const startTimestampMs = parseUtcTimeToday(inputValue);
+    const startTimestampMs = parseLocalTimeToday(inputValue);
+    const nowMs = Date.now();
 
     if (Number.isNaN(startTimestampMs)) {
-      status.textContent = "Invalid UTC time. Use HH:MM:SS.";
+      status.textContent = "Invalid local time. Use HH:MM:SS.";
       updateDebug();
+      return;
+    }
+
+    scheduledStartMs = startTimestampMs;
+    const offsetSeconds = (nowMs - startTimestampMs) / 1000;
+
+    updateDebug(
+      `Now (local): ${new Date(nowMs).toString()}\n` +
+      `Entered start today (local): ${new Date(startTimestampMs).toString()}\n` +
+      `Calculated offset: ${offsetSeconds.toFixed(1)}s (${fmt(offsetSeconds)})`
+    );
+
+    if (!isFinite(audio.duration)) {
+      status.textContent = "Audio duration not ready yet.";
+      return;
+    }
+
+    // FUTURE START
+    if (offsetSeconds < 0) {
+      const armed = await armAudio();
+      if (!armed) {
+        status.textContent = "Could not arm scheduled playback. Try again.";
+        return;
+      }
+
+      countdownInterval = setInterval(async () => {
+        const remainingMs = scheduledStartMs - Date.now();
+
+        if (remainingMs > 0) {
+          status.textContent = `Scheduled. Starts in ${(remainingMs / 1000).toFixed(1)}s.`;
+          return;
+        }
+
+        clearInterval(countdownInterval);
+        countdownInterval = null;
+
+        try {
+          await startPlaybackAt(0);
+          updateDebug(
+            `Now (local): ${new Date(Date.now()).toString()}\n` +
+            `Entered start today (local): ${new Date(startTimestampMs).toString()}\n` +
+            `Calculated offset: 0.0s (${fmt(0)})`
+          );
+        } catch (err) {
+          console.error(err);
+          status.textContent = "Scheduled playback failed. See browser console.";
+        }
+      }, 100);
+
+      status.textContent = `Scheduled. Starts in ${Math.abs(offsetSeconds).toFixed(1)}s.`;
+      return;
+    }
+
+    // PAST START
+    if (offsetSeconds >= audio.duration) {
+      status.textContent = "That start time lands after the track has already ended.";
       return;
     }
 
     try {
-      await handleScheduledPlayback(startTimestampMs);
+      await startPlaybackAt(offsetSeconds);
     } catch (err) {
       console.error(err);
       status.textContent = "Playback failed. See browser console.";
     }
   });
 
-  updateUtcClock();
-  setInterval(updateUtcClock, 500);
+  updateLocalClock();
+  setInterval(updateLocalClock, 500);
 </script>
