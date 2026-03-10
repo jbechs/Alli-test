@@ -42,8 +42,18 @@
     }
 
     .status {
-      min-height: 2em;
+      min-height: 3em;
       color: #ccc;
+      line-height: 1.35;
+    }
+
+    .small {
+      font-size: 13px;
+      color: #999;
+    }
+
+    audio {
+      width: 100%;
     }
   </style>
 </head>
@@ -57,6 +67,7 @@
     <button id="playButton" type="button">Play Audio</button>
 
     <div id="status" class="status">Page loaded.</div>
+    <div id="debug" class="small"></div>
 
     <audio id="audio" controls preload="metadata">
       <source src="track.mp3" type="audio/mpeg" />
@@ -67,58 +78,169 @@
     const audio = document.getElementById("audio");
     const button = document.getElementById("playButton");
     const status = document.getElementById("status");
+    const debug = document.getElementById("debug");
     const startTimeInput = document.getElementById("startTime");
 
+    let countdownTimer = null;
+
+    function setStatus(msg) {
+      status.textContent = msg;
+    }
+
+    function setDebug(msg) {
+      debug.textContent = msg;
+    }
+
+    function clearCountdown() {
+      if (countdownTimer) {
+        clearTimeout(countdownTimer);
+        countdownTimer = null;
+      }
+    }
+
+    function formatTime(seconds) {
+      const s = Math.max(0, Math.floor(seconds));
+      const h = Math.floor(s / 3600);
+      const m = Math.floor((s % 3600) / 60);
+      const sec = s % 60;
+
+      if (h > 0) {
+        return `${h}:${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}`;
+      }
+      return `${m}:${String(sec).padStart(2, "0")}`;
+    }
+
+    function waitForMetadata() {
+      return new Promise((resolve, reject) => {
+        if (audio.readyState >= 1 && !Number.isNaN(audio.duration)) {
+          resolve();
+          return;
+        }
+
+        const onLoaded = () => {
+          cleanup();
+          resolve();
+        };
+
+        const onError = () => {
+          cleanup();
+          reject(new Error("Audio failed to load metadata."));
+        };
+
+        const cleanup = () => {
+          audio.removeEventListener("loadedmetadata", onLoaded);
+          audio.removeEventListener("error", onError);
+        };
+
+        audio.addEventListener("loadedmetadata", onLoaded, { once: true });
+        audio.addEventListener("error", onError, { once: true });
+        audio.load();
+      });
+    }
+
+    async function startPlaybackAt(offsetSeconds) {
+      await waitForMetadata();
+
+      const duration = audio.duration;
+
+      if (Number.isNaN(duration) || !isFinite(duration)) {
+        setStatus("Could not determine track duration.");
+        return;
+      }
+
+      if (offsetSeconds >= duration) {
+        setStatus("That start time lands after the track has already ended.");
+        setDebug(`Offset: ${offsetSeconds.toFixed(1)}s | Duration: ${duration.toFixed(1)}s`);
+        return;
+      }
+
+      const safeOffset = Math.max(0, Math.min(offsetSeconds, duration - 0.25));
+      audio.currentTime = safeOffset;
+
+      setDebug(`Offset: ${safeOffset.toFixed(1)}s | Duration: ${duration.toFixed(1)}s`);
+
+      await audio.play();
+      setStatus(`Playing from ${formatTime(safeOffset)}.`);
+    }
+
+    async function handlePlayClick() {
+      clearCountdown();
+
+      const inputValue = startTimeInput.value;
+
+      if (!inputValue) {
+        setStatus("Please enter a UTC start time.");
+        setDebug("");
+        return;
+      }
+
+      // Interpret what user typed as UTC
+      const startTimestampMs = new Date(inputValue + "Z").getTime();
+
+      if (Number.isNaN(startTimestampMs)) {
+        setStatus("Invalid UTC time.");
+        setDebug("");
+        return;
+      }
+
+      const nowMs = Date.now();
+      const offsetSeconds = (nowMs - startTimestampMs) / 1000;
+
+      setDebug(
+        `Now: ${new Date(nowMs).toISOString()} | Start: ${new Date(startTimestampMs).toISOString()} | Raw offset: ${offsetSeconds.toFixed(1)}s`
+      );
+
+      if (offsetSeconds < 0) {
+        const secondsUntilStart = Math.ceil(Math.abs(offsetSeconds));
+        setStatus(`Start time is in the future. Waiting ${secondsUntilStart}s...`);
+
+        const tick = async () => {
+          const newOffset = (Date.now() - startTimestampMs) / 1000;
+
+          if (newOffset >= 0) {
+            try {
+              await startPlaybackAt(newOffset);
+            } catch (err) {
+              console.error(err);
+              setStatus("Playback failed. See browser console.");
+            }
+            return;
+          }
+
+          setStatus(`Start time is in the future. Waiting ${Math.ceil(Math.abs(newOffset))}s...`);
+          countdownTimer = setTimeout(tick, 250);
+        };
+
+        tick();
+        return;
+      }
+
+      try {
+        await startPlaybackAt(offsetSeconds);
+      } catch (err) {
+        console.error(err);
+        setStatus("Playback failed. See browser console.");
+      }
+    }
+
     audio.addEventListener("loadedmetadata", () => {
-      status.textContent = "Audio metadata loaded.";
+      setStatus(`Audio loaded. Duration: ${formatTime(audio.duration)}.`);
     });
 
     audio.addEventListener("canplay", () => {
-      status.textContent = "Audio can play.";
+      setStatus("Player can play.");
+    });
+
+    audio.addEventListener("ended", () => {
+      setStatus("Playback ended.");
     });
 
     audio.addEventListener("error", () => {
       console.error("Audio element error:", audio.error);
-      status.textContent = "Audio error. File path or file format problem.";
+      setStatus("Audio error. File path or file format problem.");
     });
 
-    button.addEventListener("click", async () => {
-      const inputValue = startTimeInput.value;
-
-      if (!inputValue) {
-        status.textContent = "Please enter a UTC start time.";
-        return;
-      }
-
-      const startTimestampMs = new Date(inputValue + "Z").getTime();
-
-      if (Number.isNaN(startTimestampMs)) {
-        status.textContent = "Invalid UTC time.";
-        return;
-      }
-
-      const now = Date.now();
-      const offsetSeconds = Math.max(0, (now - startTimestampMs) / 1000);
-
-      status.textContent = `Button clicked. Trying play at ${offsetSeconds.toFixed(1)}s...`;
-
-      try {
-        if (audio.readyState < 1) {
-          audio.load();
-          await new Promise((resolve, reject) => {
-            audio.addEventListener("loadedmetadata", resolve, { once: true });
-            audio.addEventListener("error", reject, { once: true });
-          });
-        }
-
-        audio.currentTime = offsetSeconds;
-        await audio.play();
-        status.textContent = `Playback started at ${audio.currentTime.toFixed(1)}s.`;
-      } catch (err) {
-        console.error("Play failed:", err);
-        status.textContent = "Playback failed. See browser console.";
-      }
-    });
+    button.addEventListener("click", handlePlayClick);
   </script>
 </body>
 </html>
