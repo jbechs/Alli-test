@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>UTC Synced Audio Player</title>
+  <title>Audio Test</title>
   <style>
     body {
       margin: 0;
@@ -11,105 +11,65 @@
       display: grid;
       place-items: center;
       background: #111;
-      color: #fff;
+      color: white;
       font-family: Arial, sans-serif;
     }
-
     .container {
-      width: min(90vw, 420px);
       text-align: center;
       display: grid;
-      gap: 14px;
+      gap: 12px;
+      width: min(90vw, 420px);
     }
-
-    input, button {
-      font-size: 1rem;
+    button, input {
       padding: 12px;
+      font-size: 16px;
       border-radius: 8px;
       border: none;
     }
-
-    input {
-      background: #222;
-      color: #fff;
-    }
-
-    button {
-      background: #fff;
-      color: #111;
-      cursor: pointer;
-      font-weight: bold;
-    }
-
-    button:active {
-      transform: scale(0.98);
-    }
-
     .status {
-      min-height: 2.5em;
+      min-height: 2em;
       color: #ccc;
     }
   </style>
 </head>
 <body>
-  <main class="container">
-    <h1>UTC Synced Audio Player</h1>
-
-    <label for="startTime">Start Time (UTC)</label>
-    <input id="startTime" type="datetime-local" step="1" />
-
-    <button id="playButton" type="button">Play</button>
-
+  <div class="container">
+    <h1>Audio Test</h1>
+    <button id="playButton" type="button">Play Audio</button>
     <div id="status" class="status">Page loaded.</div>
 
-    <audio id="audio" preload="auto" playsinline>
-      <source src="audio/track.mp3" type="audio/mpeg" />
+    <audio id="audio" controls preload="metadata">
+      <source src="track.mp3" type="audio/mpeg" />
     </audio>
-  </main>
+  </div>
 
   <script>
     const audio = document.getElementById("audio");
-    const playButton = document.getElementById("playButton");
-    const startTimeInput = document.getElementById("startTime");
-    const statusEl = document.getElementById("status");
+    const button = document.getElementById("playButton");
+    const status = document.getElementById("status");
 
-    statusEl.textContent = "JavaScript loaded.";
+    audio.addEventListener("loadedmetadata", () => {
+      status.textContent = "Audio metadata loaded.";
+    });
 
-    playButton.addEventListener("click", async () => {
-      statusEl.textContent = "Button clicked.";
-
-      const inputValue = startTimeInput.value;
-      if (!inputValue) {
-        statusEl.textContent = "Please enter a UTC start time.";
-        return;
-      }
-
-      const startTimestampMs = new Date(inputValue + "Z").getTime();
-      if (Number.isNaN(startTimestampMs)) {
-        statusEl.textContent = "Invalid time.";
-        return;
-      }
-
-      try {
-        audio.load();
-        const now = Date.now();
-        const offsetSeconds = Math.max(0, (now - startTimestampMs) / 1000);
-
-        statusEl.textContent = `Trying playback at ${offsetSeconds.toFixed(1)}s...`;
-
-        audio.currentTime = offsetSeconds;
-        await audio.play();
-
-        statusEl.textContent = `Playing from ${audio.currentTime.toFixed(1)}s`;
-      } catch (err) {
-        console.error(err);
-        statusEl.textContent = "Playback failed. Check audio path / browser console.";
-      }
+    audio.addEventListener("canplay", () => {
+      status.textContent = "Audio can play.";
     });
 
     audio.addEventListener("error", () => {
-      console.error("Audio error:", audio.error);
-      statusEl.textContent = "Audio file not found or could not load.";
+      console.error("Audio element error:", audio.error);
+      status.textContent = "Audio error. File path or file format problem.";
+    });
+
+    button.addEventListener("click", async () => {
+      status.textContent = "Button clicked. Trying play...";
+      try {
+        await audio.play();
+        status.textContent = "Playback started.";
+      } catch (err) {
+        console.error("Play failed:", err);
+        status.textContent = "Playback failed. See browser console.";
+      }
     });
   </script>
 </body>
