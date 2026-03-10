@@ -2,43 +2,61 @@ const loadButton = document.getElementById("loadButton");
 const playButton = document.getElementById("playButton");
 const startTimeInput = document.getElementById("startTime");
 const statusEl = document.getElementById("status");
+const audio = document.getElementById("audio");
 
-let audioCtx = null;
-let audioBuffer = null;
-let sourceNode = null;
+console.log("player.js loaded");
+
+const AUDIO_URL = "audio/track.m4a"; // change if needed
+
+let blobUrl = null;
+let fileLoaded = false;
 let countdownTimer = null;
 let startTimestampMs = null;
 
-const AUDIO_URL = "audio/track.m4a"; // or track.mp3, but m4a/aac is preferable
-
 loadButton.addEventListener("click", async () => {
+  console.log("Load button clicked");
   try {
-    if (!audioCtx) {
-      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    fileLoaded = false;
+
+    if (blobUrl) {
+      URL.revokeObjectURL(blobUrl);
+      blobUrl = null;
     }
 
-    setStatus("Loading audio file...");
+    setStatus("Downloading audio file...");
     const response = await fetch(AUDIO_URL, { cache: "no-store" });
+
+    console.log("fetch status:", response.status);
 
     if (!response.ok) {
       throw new Error(`HTTP ${response.status}`);
     }
 
-    const arrayBuffer = await response.arrayBuffer();
-    setStatus("Decoding audio...");
-    audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
+    const blob = await response.blob();
+    console.log("blob size:", blob.size);
 
-    setStatus(`Loaded. Duration: ${formatTime(audioBuffer.duration)}.`);
+    setStatus(`Downloaded ${Math.round(blob.size / 1024)} KB. Preparing audio...`);
+
+    blobUrl = URL.createObjectURL(blob);
+    audio.src = blobUrl;
+    audio.load();
+
+    await waitForEvent(audio, "canplaythrough", 8000);
+
+    fileLoaded = true;
+    setStatus("Audio loaded and ready.");
   } catch (err) {
-    console.error(err);
-    setStatus("Failed to load/decode audio.");
+    console.error("Load failed:", err);
+    setStatus(`Load failed: ${err.message}`);
   }
 });
 
 playButton.addEventListener("click", async () => {
+  console.log("Play button clicked");
+
   clearExistingTimers();
 
-  if (!audioBuffer) {
+  if (!fileLoaded) {
     setStatus("Load audio first.");
     return;
   }
@@ -56,15 +74,12 @@ playButton.addEventListener("click", async () => {
     return;
   }
 
-  if (!audioCtx) {
-    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-  }
-
   try {
-    await audioCtx.resume();
+    await audio.play();
+    audio.pause();
   } catch (err) {
     console.error(err);
-    setStatus("Audio context could not resume.");
+    setStatus("Audio could not be initialized. Try again.");
     return;
   }
 
@@ -98,36 +113,51 @@ function waitUntilStart() {
   tick();
 }
 
-function beginPlayback(initialOffsetSeconds) {
-  stopCurrentSource();
+async function beginPlayback(initialOffsetSeconds) {
+  try {
+    const offset = Math.max(0, initialOffsetSeconds);
 
-  const offset = Math.max(0, initialOffsetSeconds);
+    if (!Number.isNaN(audio.duration) && offset >= audio.duration) {
+      setStatus("The track has already finished.");
+      return;
+    }
 
-  if (offset >= audioBuffer.duration) {
-    setStatus("The track has already finished.");
-    return;
+    audio.pause();
+    audio.currentTime = offset;
+
+    if (audio.seeking) {
+      await waitForEvent(audio, "seeked", 4000);
+    }
+
+    await audio.play();
+    setStatus(`Playing from ${formatTime(audio.currentTime)}.`);
+  } catch (err) {
+    console.error(err);
+    setStatus(`Playback failed: ${err.message}`);
   }
-
-  sourceNode = audioCtx.createBufferSource();
-  sourceNode.buffer = audioBuffer;
-  sourceNode.connect(audioCtx.destination);
-
-  sourceNode.onended = () => {
-    setStatus("Playback ended.");
-  };
-
-  sourceNode.start(0, offset);
-  setStatus(`Playing from ${formatTime(offset)}.`);
 }
 
-function stopCurrentSource() {
-  if (sourceNode) {
-    try {
-      sourceNode.stop();
-    } catch (_) {}
-    sourceNode.disconnect();
-    sourceNode = null;
-  }
+function waitForEvent(el, eventName, timeoutMs = 4000) {
+  return new Promise((resolve, reject) => {
+    let done = false;
+
+    const onEvent = () => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      el.removeEventListener(eventName, onEvent);
+      resolve();
+    };
+
+    const timer = setTimeout(() => {
+      if (done) return;
+      done = true;
+      el.removeEventListener(eventName, onEvent);
+      reject(new Error(`${eventName} timeout`));
+    }, timeoutMs);
+
+    el.addEventListener(eventName, onEvent, { once: true });
+  });
 }
 
 function clearExistingTimers() {
@@ -138,6 +168,7 @@ function clearExistingTimers() {
 }
 
 function setStatus(message) {
+  console.log("STATUS:", message);
   statusEl.textContent = message;
 }
 
@@ -153,3 +184,11 @@ function formatTime(seconds) {
 
   return `${mins}:${String(secs).padStart(2, "0")}`;
 }
+
+audio.addEventListener("waiting", () => {
+  setStatus("Playback is waiting for data...");
+});
+
+audio.addEventListener("ended", () => {
+  setStatus("Playback ended.");
+});
