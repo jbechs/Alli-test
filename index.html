@@ -1,242 +1,209 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Local Time Audio Test</title>
-  <style>
-    body {
-      margin: 0;
-      min-height: 100vh;
-      display: grid;
-      place-items: center;
-      background: #111;
-      color: white;
-      font-family: Arial, sans-serif;
+<script>
+  const audio = document.getElementById("audio");
+  const playButton = document.getElementById("playButton");
+  const startNowButton = document.getElementById("startNowButton");
+  const fill30Button = document.getElementById("fill30Button");
+  const utcTimeInput = document.getElementById("utcTime");
+  const utcNowEl = document.getElementById("utcNow");
+  const status = document.getElementById("status");
+  const debug = document.getElementById("debug");
+
+  let scheduledTimer = null;
+  let countdownTimer = null;
+
+  function fmt(seconds) {
+    if (!isFinite(seconds)) return "unknown";
+    const s = Math.floor(Math.max(0, seconds));
+    const m = Math.floor(s / 60);
+    const sec = s % 60;
+    return `${m}:${String(sec).padStart(2, "0")}`;
+  }
+
+  function pad(n) {
+    return String(n).padStart(2, "0");
+  }
+
+  function getUtcHMS(date = new Date()) {
+    return `${pad(date.getUTCHours())}:${pad(date.getUTCMinutes())}:${pad(date.getUTCSeconds())}`;
+  }
+
+  function updateUtcClock() {
+    utcNowEl.textContent = getUtcHMS();
+  }
+
+  function parseUtcTimeToday(hms) {
+    const match = hms.trim().match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
+    if (!match) return NaN;
+
+    const hours = Number(match[1]);
+    const minutes = Number(match[2]);
+    const seconds = Number(match[3] || "0");
+
+    if (
+      hours < 0 || hours > 23 ||
+      minutes < 0 || minutes > 59 ||
+      seconds < 0 || seconds > 59
+    ) {
+      return NaN;
     }
 
-    .container {
-      text-align: center;
-      display: grid;
-      gap: 12px;
-      width: min(90vw, 460px);
+    const now = new Date();
+    return Date.UTC(
+      now.getUTCFullYear(),
+      now.getUTCMonth(),
+      now.getUTCDate(),
+      hours,
+      minutes,
+      seconds
+    );
+  }
+
+  function clearScheduledStart() {
+    if (scheduledTimer) {
+      clearTimeout(scheduledTimer);
+      scheduledTimer = null;
+    }
+    if (countdownTimer) {
+      clearInterval(countdownTimer);
+      countdownTimer = null;
+    }
+  }
+
+  function updateDebug(extra = "") {
+    debug.textContent =
+      `Current audio time: ${audio.currentTime.toFixed(1)}s (${fmt(audio.currentTime)})\n` +
+      `Track duration: ${isFinite(audio.duration) ? audio.duration.toFixed(1) : "unknown"}s (${fmt(audio.duration)})\n` +
+      extra;
+  }
+
+  async function playAtOffset(offsetSeconds) {
+    if (!isFinite(audio.duration)) {
+      status.textContent = "Audio duration not ready yet.";
+      return;
     }
 
-    input, button {
-      padding: 12px;
-      font-size: 16px;
-      border-radius: 8px;
-      border: none;
+    if (offsetSeconds >= audio.duration) {
+      status.textContent = "That start time lands after the track has already ended.";
+      return;
     }
 
-    input {
-      background: #222;
-      color: white;
-      text-align: center;
+    const safeOffset = Math.max(0, offsetSeconds);
+    audio.currentTime = safeOffset;
+    await audio.play();
+    status.textContent = `Playback started at ${audio.currentTime.toFixed(1)}s.`;
+  }
+
+  async function handleScheduledPlayback(startTimestampMs) {
+    const nowMs = Date.now();
+    const offsetSeconds = (nowMs - startTimestampMs) / 1000;
+
+    updateDebug(
+      `Now (UTC): ${new Date(nowMs).toISOString()}\n` +
+      `Entered start today (UTC): ${new Date(startTimestampMs).toISOString()}\n` +
+      `Calculated offset: ${offsetSeconds.toFixed(1)}s (${fmt(offsetSeconds)})`
+    );
+
+    if (offsetSeconds < 0) {
+      const msUntilStart = startTimestampMs - nowMs;
+      status.textContent = `Scheduled. Starts in ${(msUntilStart / 1000).toFixed(1)}s.`;
+
+      countdownTimer = setInterval(() => {
+        const remainingMs = startTimestampMs - Date.now();
+        if (remainingMs <= 0) {
+          clearScheduledStart();
+          return;
+        }
+        status.textContent = `Scheduled. Starts in ${(remainingMs / 1000).toFixed(1)}s.`;
+      }, 100);
+
+      scheduledTimer = setTimeout(async () => {
+        clearScheduledStart();
+        try {
+          await playAtOffset(0);
+          updateDebug(
+            `Now (UTC): ${new Date(Date.now()).toISOString()}\n` +
+            `Entered start today (UTC): ${new Date(startTimestampMs).toISOString()}\n` +
+            `Calculated offset: 0.0s (${fmt(0)})`
+          );
+        } catch (err) {
+          console.error(err);
+          status.textContent = "Scheduled playback failed. See browser console.";
+        }
+      }, msUntilStart);
+
+      return;
     }
 
-    button {
-      background: white;
-      color: black;
-      cursor: pointer;
-      font-weight: bold;
-    }
+    await playAtOffset(offsetSeconds);
+  }
 
-    .status {
-      min-height: 2em;
-      color: #ccc;
-      line-height: 1.4;
-    }
+  audio.addEventListener("loadedmetadata", () => {
+    status.textContent = `Audio loaded. Duration: ${fmt(audio.duration)}.`;
+    updateDebug();
+  });
 
-    .small {
-      font-size: 13px;
-      color: #999;
-      line-height: 1.4;
-      white-space: pre-wrap;
-    }
+  audio.addEventListener("canplay", () => {
+    status.textContent = "Player can play.";
+    updateDebug();
+  });
 
-    audio {
-      width: 100%;
-    }
-  </style>
-</head>
-<body>
-  <div class="container">
-    <h1>Local Time Audio Test</h1>
+  audio.addEventListener("error", () => {
+    console.error("Audio element error:", audio.error);
+    status.textContent = "Audio error. File path or file format problem.";
+    updateDebug();
+  });
 
-    <div class="small">Current Local Time: <span id="localNow">--:--:--</span></div>
+  audio.addEventListener("ended", () => {
+    status.textContent = "Playback ended.";
+    updateDebug();
+  });
 
-    <label for="localTime">Start Time (Local, HH:MM:SS)</label>
-    <input id="localTime" type="text" placeholder="00:09:20" />
-
-    <button id="playButton" type="button">Play From Local Time</button>
-    <button id="startNowButton" type="button">Play From Start</button>
-    <button id="fill30Button" type="button">Set Start to 30 Sec Ago</button>
-
-    <div id="status" class="status">Page loaded.</div>
-    <div id="debug" class="small"></div>
-
-    <audio id="audio" controls preload="metadata">
-      <source src="track.mp3" type="audio/mpeg" />
-    </audio>
-  </div>
-
-  <script>
-    const audio = document.getElementById("audio");
-    const playButton = document.getElementById("playButton");
-    const startNowButton = document.getElementById("startNowButton");
-    const fill30Button = document.getElementById("fill30Button");
-    const localTimeInput = document.getElementById("localTime");
-    const localNowEl = document.getElementById("localNow");
-    const status = document.getElementById("status");
-    const debug = document.getElementById("debug");
-
-    function fmt(seconds) {
-      if (!isFinite(seconds)) return "unknown";
-      const s = Math.floor(seconds);
-      const m = Math.floor(s / 60);
-      const sec = s % 60;
-      return `${m}:${String(sec).padStart(2, "0")}`;
-    }
-
-    function pad(n) {
-      return String(n).padStart(2, "0");
-    }
-
-    function getLocalHMS(date = new Date()) {
-      return `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
-    }
-
-    function updateLocalClock() {
-      localNowEl.textContent = getLocalHMS();
-    }
-
-    function parseLocalTimeToday(hms) {
-      const match = hms.trim().match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
-      if (!match) return NaN;
-
-      const hours = Number(match[1]);
-      const minutes = Number(match[2]);
-      const seconds = Number(match[3] || "0");
-
-      if (
-        hours < 0 || hours > 23 ||
-        minutes < 0 || minutes > 59 ||
-        seconds < 0 || seconds > 59
-      ) {
-        return NaN;
-      }
-
-      const now = new Date();
-      return new Date(
-        now.getFullYear(),
-        now.getMonth(),
-        now.getDate(),
-        hours,
-        minutes,
-        seconds
-      ).getTime();
-    }
-
-    function updateDebug(extra = "") {
-      debug.textContent =
-        `Current audio time: ${audio.currentTime.toFixed(1)}s (${fmt(audio.currentTime)})\n` +
-        `Track duration: ${isFinite(audio.duration) ? audio.duration.toFixed(1) : "unknown"}s (${fmt(audio.duration)})\n` +
-        extra;
-    }
-
-    audio.addEventListener("loadedmetadata", () => {
-      status.textContent = `Audio loaded. Duration: ${fmt(audio.duration)}.`;
+  startNowButton.addEventListener("click", async () => {
+    clearScheduledStart();
+    try {
+      audio.currentTime = 0;
+      await audio.play();
+      status.textContent = "Playing from start.";
       updateDebug();
-    });
+    } catch (err) {
+      console.error(err);
+      status.textContent = "Play from start failed.";
+    }
+  });
 
-    audio.addEventListener("canplay", () => {
-      status.textContent = "Player can play.";
+  fill30Button.addEventListener("click", () => {
+    const d = new Date(Date.now() - 30000);
+    utcTimeInput.value = getUtcHMS(d);
+    status.textContent = "Set start time to 30 seconds ago in UTC.";
+  });
+
+  playButton.addEventListener("click", async () => {
+    clearScheduledStart();
+
+    const inputValue = utcTimeInput.value;
+
+    if (!inputValue) {
+      status.textContent = "Please enter a UTC time.";
       updateDebug();
-    });
+      return;
+    }
 
-    audio.addEventListener("error", () => {
-      console.error("Audio element error:", audio.error);
-      status.textContent = "Audio error. File path or file format problem.";
+    const startTimestampMs = parseUtcTimeToday(inputValue);
+
+    if (Number.isNaN(startTimestampMs)) {
+      status.textContent = "Invalid UTC time. Use HH:MM:SS.";
       updateDebug();
-    });
+      return;
+    }
 
-    audio.addEventListener("ended", () => {
-      status.textContent = "Playback ended.";
-      updateDebug();
-    });
+    try {
+      await handleScheduledPlayback(startTimestampMs);
+    } catch (err) {
+      console.error(err);
+      status.textContent = "Playback failed. See browser console.";
+    }
+  });
 
-    startNowButton.addEventListener("click", async () => {
-      try {
-        audio.currentTime = 0;
-        await audio.play();
-        status.textContent = "Playing from start.";
-        updateDebug();
-      } catch (err) {
-        console.error(err);
-        status.textContent = "Play from start failed.";
-      }
-    });
-
-    fill30Button.addEventListener("click", () => {
-      const d = new Date(Date.now() - 30000);
-      localTimeInput.value = getLocalHMS(d);
-      status.textContent = "Set start time to 30 seconds ago in local time.";
-    });
-
-    playButton.addEventListener("click", async () => {
-      const inputValue = localTimeInput.value;
-
-      if (!inputValue) {
-        status.textContent = "Please enter a local time.";
-        updateDebug();
-        return;
-      }
-
-      const startTimestampMs = parseLocalTimeToday(inputValue);
-      const nowMs = Date.now();
-
-      if (Number.isNaN(startTimestampMs)) {
-        status.textContent = "Invalid local time. Use HH:MM:SS.";
-        updateDebug();
-        return;
-      }
-
-      const offsetSeconds = (nowMs - startTimestampMs) / 1000;
-
-      updateDebug(
-        `Now (local): ${new Date(nowMs).toString()}\n` +
-        `Entered start today (local): ${new Date(startTimestampMs).toString()}\n` +
-        `Calculated offset: ${offsetSeconds.toFixed(1)}s (${fmt(offsetSeconds)})`
-      );
-
-      if (!isFinite(audio.duration)) {
-        status.textContent = "Audio duration not ready yet.";
-        return;
-      }
-
-      if (offsetSeconds < 0) {
-        status.textContent = "That local time is in the future.";
-        return;
-      }
-
-      if (offsetSeconds >= audio.duration) {
-        status.textContent = "That start time lands after the track has already ended.";
-        return;
-      }
-
-      try {
-        audio.currentTime = offsetSeconds;
-        await audio.play();
-        status.textContent = `Playback started at ${audio.currentTime.toFixed(1)}s.`;
-      } catch (err) {
-        console.error(err);
-        status.textContent = "Playback failed. See browser console.";
-      }
-    });
-
-    updateLocalClock();
-    setInterval(updateLocalClock, 500);
-  </script>
-</body>
-</html>
+  updateUtcClock();
+  setInterval(updateUtcClock, 500);
+</script>
