@@ -5,6 +5,7 @@ const statusEl = document.getElementById("status");
 
 let countdownTimer = null;
 let startTimestampMs = null;
+let pendingStart = false;
 
 playButton.addEventListener("click", async () => {
   clearExistingTimers();
@@ -16,17 +17,15 @@ playButton.addEventListener("click", async () => {
   }
 
   startTimestampMs = parseUtcInput(inputValue);
-
   if (Number.isNaN(startTimestampMs)) {
     setStatus("Invalid time format.");
     return;
   }
 
   try {
-    // Unlock audio with a direct user gesture
+    // Unlock media on iPhone with direct user gesture
     await audio.play();
     audio.pause();
-    audio.load();
   } catch (err) {
     console.error(err);
     setStatus("Audio could not be initialized. Try again.");
@@ -63,41 +62,91 @@ function waitUntilStart() {
   tick();
 }
 
-function beginPlayback(initialOffsetSeconds) {
-  const desiredStart = Math.max(0, initialOffsetSeconds);
+async function beginPlayback(initialOffsetSeconds) {
+  if (pendingStart) return;
+  pendingStart = true;
 
-  const startNow = async () => {
-    try {
-      if (!Number.isNaN(audio.duration) && desiredStart >= audio.duration) {
-        setStatus("The track has already finished.");
-        return;
-      }
+  try {
+    const desiredStart = Math.max(0, initialOffsetSeconds);
 
-      audio.pause();
-      audio.currentTime = desiredStart;
+    await ensureMetadata();
 
-      if (audio.seeking) {
-        await once(audio, "seeked", 3000);
-      }
-
-      await audio.play();
-      setStatus(`Playing from ${formatTime(audio.currentTime)}.`);
-    } catch (err) {
-      console.error(err);
-      setStatus("Playback failed. Try pressing Play again.");
+    if (!Number.isNaN(audio.duration) && desiredStart >= audio.duration) {
+      setStatus("The track has already finished.");
+      pendingStart = false;
+      return;
     }
-  };
 
-  if (audio.readyState >= 3) {
-    startNow();
-  } else {
-    setStatus("Buffering audio...");
-    audio.addEventListener("canplay", startNow, { once: true });
+    // Seek once
+    audio.currentTime = desiredStart;
+    await once(audio, "seeked", 4000);
+
+    // Wait until the desired point is actually inside a buffered range
+    await waitForBufferedAt(desiredStart, 6000);
+
+    await audio.play();
+    setStatus(`Playing from ${formatTime(audio.currentTime)}.`);
+  } catch (err) {
+    console.error(err);
+    setStatus("Playback failed or audio was not buffered enough.");
+  } finally {
+    pendingStart = false;
   }
 }
 
-function once(el, eventName, timeoutMs = 3000) {
+function ensureMetadata() {
   return new Promise((resolve) => {
+    if (audio.readyState >= 1) {
+      resolve();
+      return;
+    }
+
+    const done = () => {
+      audio.removeEventListener("loadedmetadata", done);
+      resolve();
+    };
+
+    audio.addEventListener("loadedmetadata", done, { once: true });
+  });
+}
+
+function waitForBufferedAt(time, timeoutMs = 6000) {
+  return new Promise((resolve, reject) => {
+    const start = Date.now();
+
+    const check = () => {
+      if (isTimeBuffered(time)) {
+        resolve();
+        return;
+      }
+
+      if (Date.now() - start > timeoutMs) {
+        reject(new Error("Timed out waiting for buffer"));
+        return;
+      }
+
+      setStatus(`Buffering near ${formatTime(time)}...`);
+      setTimeout(check, 200);
+    };
+
+    check();
+  });
+}
+
+function isTimeBuffered(time) {
+  const ranges = audio.buffered;
+  for (let i = 0; i < ranges.length; i++) {
+    const start = ranges.start(i);
+    const end = ranges.end(i);
+    if (time >= start && time <= end - 0.05) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function once(el, eventName, timeoutMs = 4000) {
+  return new Promise((resolve, reject) => {
     let done = false;
 
     const finish = () => {
@@ -108,8 +157,16 @@ function once(el, eventName, timeoutMs = 3000) {
       resolve();
     };
 
+    const fail = () => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      el.removeEventListener(eventName, onEvent);
+      reject(new Error(`${eventName} timeout`));
+    };
+
     const onEvent = () => finish();
-    const timer = setTimeout(finish, timeoutMs);
+    const timer = setTimeout(fail, timeoutMs);
 
     el.addEventListener(eventName, onEvent, { once: true });
   });
