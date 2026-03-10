@@ -15,15 +15,6 @@ body {
   gap: 14px;
 }
 
-h1 {
-  font-size: 1.6rem;
-  margin: 0 0 8px;
-}
-
-label {
-  font-size: 0.95rem;
-}
-
 input,
 button {
   font-size: 1rem;
@@ -44,12 +35,7 @@ button {
   font-weight: bold;
 }
 
-button:hover {
-  opacity: 0.92;
-}
-
 .status {
   min-height: 2.5em;
-  font-size: 0.95rem;
   color: #ccc;
 }
