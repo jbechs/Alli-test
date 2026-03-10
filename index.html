@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>UTC Synced Audio Player</title>
+  <title>UTC Audio Test</title>
   <style>
     body {
       margin: 0;
@@ -22,7 +22,7 @@
       width: min(90vw, 420px);
     }
 
-    input, button {
+    button, input {
       padding: 12px;
       font-size: 16px;
       border-radius: 8px;
@@ -45,35 +45,44 @@
       min-height: 2em;
       color: #ccc;
     }
-
-    audio {
-      width: 100%;
-    }
   </style>
 </head>
 <body>
   <div class="container">
-    <h1>UTC Synced Audio Player</h1>
+    <h1>UTC Audio Test</h1>
 
     <label for="startTime">Start Time (UTC)</label>
     <input id="startTime" type="datetime-local" step="1" />
 
-    <button id="playButton" type="button">Play</button>
+    <button id="playButton" type="button">Play Audio</button>
 
     <div id="status" class="status">Page loaded.</div>
 
     <audio id="audio" controls preload="metadata">
-      <source src="track.mp3" type="audio/mpeg">
+      <source src="track.mp3" type="audio/mpeg" />
     </audio>
   </div>
 
   <script>
     const audio = document.getElementById("audio");
-    const playButton = document.getElementById("playButton");
-    const startTimeInput = document.getElementById("startTime");
+    const button = document.getElementById("playButton");
     const status = document.getElementById("status");
+    const startTimeInput = document.getElementById("startTime");
 
-    playButton.addEventListener("click", async () => {
+    audio.addEventListener("loadedmetadata", () => {
+      status.textContent = "Audio metadata loaded.";
+    });
+
+    audio.addEventListener("canplay", () => {
+      status.textContent = "Audio can play.";
+    });
+
+    audio.addEventListener("error", () => {
+      console.error("Audio element error:", audio.error);
+      status.textContent = "Audio error. File path or file format problem.";
+    });
+
+    button.addEventListener("click", async () => {
       const inputValue = startTimeInput.value;
 
       if (!inputValue) {
@@ -91,34 +100,24 @@
       const now = Date.now();
       const offsetSeconds = Math.max(0, (now - startTimestampMs) / 1000);
 
-      status.textContent = `Trying playback at ${offsetSeconds.toFixed(1)} seconds...`;
+      status.textContent = `Button clicked. Trying play at ${offsetSeconds.toFixed(1)}s...`;
 
-      const go = async () => {
-        try {
-          audio.currentTime = offsetSeconds;
-          await audio.play();
-          status.textContent = `Playing from ${audio.currentTime.toFixed(1)} seconds.`;
-        } catch (err) {
-          console.error("Playback failed:", err);
-          status.textContent = "Playback failed. Check browser console.";
+      try {
+        if (audio.readyState < 1) {
+          audio.load();
+          await new Promise((resolve, reject) => {
+            audio.addEventListener("loadedmetadata", resolve, { once: true });
+            audio.addEventListener("error", reject, { once: true });
+          });
         }
-      };
 
-      if (audio.readyState >= 1) {
-        go();
-      } else {
-        audio.addEventListener("loadedmetadata", go, { once: true });
-        audio.load();
+        audio.currentTime = offsetSeconds;
+        await audio.play();
+        status.textContent = `Playback started at ${audio.currentTime.toFixed(1)}s.`;
+      } catch (err) {
+        console.error("Play failed:", err);
+        status.textContent = "Playback failed. See browser console.";
       }
-    });
-
-    audio.addEventListener("loadedmetadata", () => {
-      status.textContent = `Audio loaded. Duration: ${audio.duration.toFixed(1)} seconds.`;
-    });
-
-    audio.addEventListener("error", () => {
-      console.error("Audio error:", audio.error);
-      status.textContent = "Audio failed to load. Check file path and filename.";
     });
   </script>
 </body>
