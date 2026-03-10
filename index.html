@@ -1,288 +1,370 @@
-<script>
-  const audio = document.getElementById("audio");
-  const playButton = document.getElementById("playButton");
-  const startNowButton = document.getElementById("startNowButton");
-  const fill30Button = document.getElementById("fill30Button");
-  const localTimeInput = document.getElementById("localTime");
-  const localNowEl = document.getElementById("localNow");
-  const status = document.getElementById("status");
-  const debug = document.getElementById("debug");
-
-  let scheduledStartMs = null;
-  let countdownInterval = null;
-  let syncInterval = null;
-
-  const SOFT_CORRECT_THRESHOLD = 0.15; // seconds
-  const HARD_CORRECT_THRESHOLD = 1.0;  // seconds
-  const MAX_PLAYBACK_RATE_ADJUST = 0.02; // ±2%
-  const SYNC_CHECK_MS = 3000;
-
-  function fmt(seconds) {
-    if (!isFinite(seconds)) return "unknown";
-    const s = Math.floor(Math.max(0, seconds));
-    const m = Math.floor(s / 60);
-    const sec = s % 60;
-    return `${m}:${String(sec).padStart(2, "0")}`;
-  }
-
-  function pad(n) {
-    return String(n).padStart(2, "0");
-  }
-
-  function getLocalHMS(date = new Date()) {
-    return `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
-  }
-
-  function updateLocalClock() {
-    localNowEl.textContent = getLocalHMS();
-  }
-
-  function parseLocalTimeToday(hms) {
-    const match = hms.trim().match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
-    if (!match) return NaN;
-
-    const hours = Number(match[1]);
-    const minutes = Number(match[2]);
-    const seconds = Number(match[3] || "0");
-
-    if (
-      hours < 0 || hours > 23 ||
-      minutes < 0 || minutes > 59 ||
-      seconds < 0 || seconds > 59
-    ) {
-      return NaN;
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Local Time Audio Test</title>
+  <style>
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      background: #111;
+      color: white;
+      font-family: Arial, sans-serif;
     }
 
-    const now = new Date();
-    return new Date(
-      now.getFullYear(),
-      now.getMonth(),
-      now.getDate(),
-      hours,
-      minutes,
-      seconds
-    ).getTime();
-  }
-
-  function updateDebug(extra = "") {
-    debug.textContent =
-      `Current audio time: ${audio.currentTime.toFixed(1)}s (${fmt(audio.currentTime)})\n` +
-      `Track duration: ${isFinite(audio.duration) ? audio.duration.toFixed(1) : "unknown"}s (${fmt(audio.duration)})\n` +
-      extra;
-  }
-
-  function clearTimers() {
-    if (countdownInterval) {
-      clearInterval(countdownInterval);
-      countdownInterval = null;
+    .container {
+      text-align: center;
+      display: grid;
+      gap: 12px;
+      width: min(90vw, 460px);
     }
-    if (syncInterval) {
-      clearInterval(syncInterval);
-      syncInterval = null;
+
+    input, button {
+      padding: 12px;
+      font-size: 16px;
+      border-radius: 8px;
+      border: none;
     }
-  }
 
-  function clamp(value, min, max) {
-    return Math.min(Math.max(value, min), max);
-  }
+    input {
+      background: #222;
+      color: white;
+      text-align: center;
+    }
 
-  function startSyncLoop() {
-    if (syncInterval) clearInterval(syncInterval);
+    button {
+      background: white;
+      color: black;
+      cursor: pointer;
+      font-weight: bold;
+    }
 
-    syncInterval = setInterval(() => {
-      if (!scheduledStartMs || audio.paused || audio.ended) return;
+    .status {
+      min-height: 2em;
+      color: #ccc;
+      line-height: 1.4;
+    }
 
-      const expectedTime = (Date.now() - scheduledStartMs) / 1000;
-      const actualTime = audio.currentTime;
-      const drift = expectedTime - actualTime;
+    .small {
+      font-size: 13px;
+      color: #999;
+      line-height: 1.4;
+      white-space: pre-wrap;
+    }
 
-      if (!isFinite(audio.duration)) return;
+    audio {
+      width: 100%;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Local Time Audio Test</h1>
 
-      if (expectedTime >= audio.duration) {
-        status.textContent = "Playback ended.";
-        clearTimers();
-        return;
+    <div class="small">Current Local Time: <span id="localNow">--:--:--</span></div>
+
+    <label for="localTime">Start Time (Local, HH:MM:SS)</label>
+    <input id="localTime" type="text" placeholder="00:09:20" />
+
+    <button id="playButton" type="button">Play From Local Time</button>
+    <button id="startNowButton" type="button">Play From Start</button>
+    <button id="fill30Button" type="button">Set Start to 30 Sec Ago</button>
+
+    <div id="status" class="status">Page loaded.</div>
+    <div id="debug" class="small"></div>
+
+    <audio id="audio" controls preload="metadata">
+      <source src="track.mp3" type="audio/mpeg" />
+    </audio>
+  </div>
+
+  <script>
+    const audio = document.getElementById("audio");
+    const playButton = document.getElementById("playButton");
+    const startNowButton = document.getElementById("startNowButton");
+    const fill30Button = document.getElementById("fill30Button");
+    const localTimeInput = document.getElementById("localTime");
+    const localNowEl = document.getElementById("localNow");
+    const status = document.getElementById("status");
+    const debug = document.getElementById("debug");
+
+    let scheduledStartMs = null;
+    let countdownInterval = null;
+    let syncInterval = null;
+
+    const SOFT_CORRECT_THRESHOLD = 0.15;
+    const HARD_CORRECT_THRESHOLD = 1.0;
+    const MAX_PLAYBACK_RATE_ADJUST = 0.02;
+    const SYNC_CHECK_MS = 3000;
+
+    function fmt(seconds) {
+      if (!isFinite(seconds)) return "unknown";
+      const s = Math.floor(Math.max(0, seconds));
+      const m = Math.floor(s / 60);
+      const sec = s % 60;
+      return `${m}:${String(sec).padStart(2, "0")}`;
+    }
+
+    function pad(n) {
+      return String(n).padStart(2, "0");
+    }
+
+    function getLocalHMS(date = new Date()) {
+      return `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`;
+    }
+
+    function updateLocalClock() {
+      localNowEl.textContent = getLocalHMS();
+    }
+
+    function parseLocalTimeToday(hms) {
+      const match = hms.trim().match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
+      if (!match) return NaN;
+
+      const hours = Number(match[1]);
+      const minutes = Number(match[2]);
+      const seconds = Number(match[3] || "0");
+
+      if (
+        hours < 0 || hours > 23 ||
+        minutes < 0 || minutes > 59 ||
+        seconds < 0 || seconds > 59
+      ) {
+        return NaN;
       }
 
-      if (Math.abs(drift) >= HARD_CORRECT_THRESHOLD) {
-        audio.currentTime = Math.max(0, expectedTime);
-        audio.playbackRate = 1.0;
-        status.textContent = `Hard resync at ${fmt(audio.currentTime)}.`;
-        return;
+      const now = new Date();
+      return new Date(
+        now.getFullYear(),
+        now.getMonth(),
+        now.getDate(),
+        hours,
+        minutes,
+        seconds
+      ).getTime();
+    }
+
+    function updateDebug(extra = "") {
+      debug.textContent =
+        `Current audio time: ${audio.currentTime.toFixed(1)}s (${fmt(audio.currentTime)})\n` +
+        `Track duration: ${isFinite(audio.duration) ? audio.duration.toFixed(1) : "unknown"}s (${fmt(audio.duration)})\n` +
+        extra;
+    }
+
+    function clearTimers() {
+      if (countdownInterval) {
+        clearInterval(countdownInterval);
+        countdownInterval = null;
       }
-
-      if (Math.abs(drift) >= SOFT_CORRECT_THRESHOLD) {
-        const correction = clamp(drift * 0.02, -MAX_PLAYBACK_RATE_ADJUST, MAX_PLAYBACK_RATE_ADJUST);
-        audio.playbackRate = 1.0 + correction;
-      } else {
-        audio.playbackRate = 1.0;
+      if (syncInterval) {
+        clearInterval(syncInterval);
+        syncInterval = null;
       }
-    }, SYNC_CHECK_MS);
-  }
-
-  async function armAudio() {
-    // Helps browsers treat the later scheduled play as user-initiated.
-    try {
-      audio.muted = true;
-      audio.currentTime = 0;
-      await audio.play();
-      audio.pause();
-      audio.currentTime = 0;
-      audio.muted = false;
-      return true;
-    } catch (err) {
-      console.error("Arm failed:", err);
-      audio.muted = false;
-      return false;
-    }
-  }
-
-  async function startPlaybackAt(offsetSeconds) {
-    if (!isFinite(audio.duration)) {
-      status.textContent = "Audio duration not ready yet.";
-      return;
     }
 
-    if (offsetSeconds >= audio.duration) {
-      status.textContent = "That start time lands after the track has already ended.";
-      return;
+    function clamp(value, min, max) {
+      return Math.min(Math.max(value, min), max);
     }
 
-    audio.currentTime = Math.max(0, offsetSeconds);
-    audio.playbackRate = 1.0;
-    await audio.play();
-    status.textContent = `Playback started at ${audio.currentTime.toFixed(1)}s.`;
-    startSyncLoop();
-  }
+    function startSyncLoop() {
+      if (syncInterval) clearInterval(syncInterval);
 
-  audio.addEventListener("loadedmetadata", () => {
-    status.textContent = `Audio loaded. Duration: ${fmt(audio.duration)}.`;
-    updateDebug();
-  });
+      syncInterval = setInterval(() => {
+        if (!scheduledStartMs || audio.paused || audio.ended) return;
 
-  audio.addEventListener("canplay", () => {
-    status.textContent = "Player can play.";
-    updateDebug();
-  });
+        const expectedTime = (Date.now() - scheduledStartMs) / 1000;
+        const actualTime = audio.currentTime;
+        const drift = expectedTime - actualTime;
 
-  audio.addEventListener("error", () => {
-    console.error("Audio element error:", audio.error);
-    status.textContent = "Audio error. File path or file format problem.";
-    updateDebug();
-  });
+        if (!isFinite(audio.duration)) return;
 
-  audio.addEventListener("ended", () => {
-    status.textContent = "Playback ended.";
-    clearTimers();
-    updateDebug();
-  });
-
-  startNowButton.addEventListener("click", async () => {
-    clearTimers();
-    scheduledStartMs = Date.now();
-
-    try {
-      audio.currentTime = 0;
-      await audio.play();
-      status.textContent = "Playing from start.";
-      updateDebug();
-      startSyncLoop();
-    } catch (err) {
-      console.error(err);
-      status.textContent = "Play from start failed.";
-    }
-  });
-
-  fill30Button.addEventListener("click", () => {
-    const d = new Date(Date.now() - 30000);
-    localTimeInput.value = getLocalHMS(d);
-    status.textContent = "Set start time to 30 seconds ago in local time.";
-  });
-
-  playButton.addEventListener("click", async () => {
-    clearTimers();
-
-    const inputValue = localTimeInput.value;
-
-    if (!inputValue) {
-      status.textContent = "Please enter a local time.";
-      updateDebug();
-      return;
-    }
-
-    const startTimestampMs = parseLocalTimeToday(inputValue);
-    const nowMs = Date.now();
-
-    if (Number.isNaN(startTimestampMs)) {
-      status.textContent = "Invalid local time. Use HH:MM:SS.";
-      updateDebug();
-      return;
-    }
-
-    scheduledStartMs = startTimestampMs;
-    const offsetSeconds = (nowMs - startTimestampMs) / 1000;
-
-    updateDebug(
-      `Now (local): ${new Date(nowMs).toString()}\n` +
-      `Entered start today (local): ${new Date(startTimestampMs).toString()}\n` +
-      `Calculated offset: ${offsetSeconds.toFixed(1)}s (${fmt(offsetSeconds)})`
-    );
-
-    if (!isFinite(audio.duration)) {
-      status.textContent = "Audio duration not ready yet.";
-      return;
-    }
-
-    // FUTURE START
-    if (offsetSeconds < 0) {
-      const armed = await armAudio();
-      if (!armed) {
-        status.textContent = "Could not arm scheduled playback. Try again.";
-        return;
-      }
-
-      countdownInterval = setInterval(async () => {
-        const remainingMs = scheduledStartMs - Date.now();
-
-        if (remainingMs > 0) {
-          status.textContent = `Scheduled. Starts in ${(remainingMs / 1000).toFixed(1)}s.`;
+        if (expectedTime >= audio.duration) {
+          status.textContent = "Playback ended.";
+          clearTimers();
           return;
         }
 
-        clearInterval(countdownInterval);
-        countdownInterval = null;
-
-        try {
-          await startPlaybackAt(0);
-          updateDebug(
-            `Now (local): ${new Date(Date.now()).toString()}\n` +
-            `Entered start today (local): ${new Date(startTimestampMs).toString()}\n` +
-            `Calculated offset: 0.0s (${fmt(0)})`
-          );
-        } catch (err) {
-          console.error(err);
-          status.textContent = "Scheduled playback failed. See browser console.";
+        if (Math.abs(drift) >= HARD_CORRECT_THRESHOLD) {
+          audio.currentTime = Math.max(0, expectedTime);
+          audio.playbackRate = 1.0;
+          status.textContent = `Hard resync at ${fmt(audio.currentTime)}.`;
+          return;
         }
-      }, 100);
 
-      status.textContent = `Scheduled. Starts in ${Math.abs(offsetSeconds).toFixed(1)}s.`;
-      return;
+        if (Math.abs(drift) >= SOFT_CORRECT_THRESHOLD) {
+          const correction = clamp(drift * 0.02, -MAX_PLAYBACK_RATE_ADJUST, MAX_PLAYBACK_RATE_ADJUST);
+          audio.playbackRate = 1.0 + correction;
+        } else {
+          audio.playbackRate = 1.0;
+        }
+      }, SYNC_CHECK_MS);
     }
 
-    // PAST START
-    if (offsetSeconds >= audio.duration) {
-      status.textContent = "That start time lands after the track has already ended.";
-      return;
+    async function armAudio() {
+      try {
+        audio.muted = true;
+        audio.currentTime = 0;
+        await audio.play();
+        audio.pause();
+        audio.currentTime = 0;
+        audio.muted = false;
+        return true;
+      } catch (err) {
+        console.error("Arm failed:", err);
+        audio.muted = false;
+        return false;
+      }
     }
 
-    try {
-      await startPlaybackAt(offsetSeconds);
-    } catch (err) {
-      console.error(err);
-      status.textContent = "Playback failed. See browser console.";
-    }
-  });
+    async function startPlaybackAt(offsetSeconds) {
+      if (!isFinite(audio.duration)) {
+        status.textContent = "Audio duration not ready yet.";
+        return;
+      }
 
-  updateLocalClock();
-  setInterval(updateLocalClock, 500);
-</script>
+      if (offsetSeconds >= audio.duration) {
+        status.textContent = "That start time lands after the track has already ended.";
+        return;
+      }
+
+      audio.currentTime = Math.max(0, offsetSeconds);
+      audio.playbackRate = 1.0;
+      await audio.play();
+      status.textContent = `Playback started at ${audio.currentTime.toFixed(1)}s.`;
+      startSyncLoop();
+    }
+
+    audio.addEventListener("loadedmetadata", () => {
+      status.textContent = `Audio loaded. Duration: ${fmt(audio.duration)}.`;
+      updateDebug();
+    });
+
+    audio.addEventListener("canplay", () => {
+      status.textContent = "Player can play.";
+      updateDebug();
+    });
+
+    audio.addEventListener("error", () => {
+      console.error("Audio element error:", audio.error);
+      status.textContent = "Audio error. File path or file format problem.";
+      updateDebug();
+    });
+
+    audio.addEventListener("ended", () => {
+      status.textContent = "Playback ended.";
+      clearTimers();
+      updateDebug();
+    });
+
+    startNowButton.addEventListener("click", async () => {
+      clearTimers();
+      scheduledStartMs = Date.now();
+
+      try {
+        audio.currentTime = 0;
+        await audio.play();
+        status.textContent = "Playing from start.";
+        updateDebug();
+        startSyncLoop();
+      } catch (err) {
+        console.error(err);
+        status.textContent = "Play from start failed.";
+      }
+    });
+
+    fill30Button.addEventListener("click", () => {
+      const d = new Date(Date.now() - 30000);
+      localTimeInput.value = getLocalHMS(d);
+      status.textContent = "Set start time to 30 seconds ago in local time.";
+    });
+
+    playButton.addEventListener("click", async () => {
+      clearTimers();
+
+      const inputValue = localTimeInput.value;
+
+      if (!inputValue) {
+        status.textContent = "Please enter a local time.";
+        updateDebug();
+        return;
+      }
+
+      const startTimestampMs = parseLocalTimeToday(inputValue);
+      const nowMs = Date.now();
+
+      if (Number.isNaN(startTimestampMs)) {
+        status.textContent = "Invalid local time. Use HH:MM:SS.";
+        updateDebug();
+        return;
+      }
+
+      scheduledStartMs = startTimestampMs;
+      const offsetSeconds = (nowMs - startTimestampMs) / 1000;
+
+      updateDebug(
+        `Now (local): ${new Date(nowMs).toString()}\n` +
+        `Entered start today (local): ${new Date(startTimestampMs).toString()}\n` +
+        `Calculated offset: ${offsetSeconds.toFixed(1)}s (${fmt(offsetSeconds)})`
+      );
+
+      if (!isFinite(audio.duration)) {
+        status.textContent = "Audio duration not ready yet.";
+        return;
+      }
+
+      if (offsetSeconds < 0) {
+        const armed = await armAudio();
+        if (!armed) {
+          status.textContent = "Could not arm scheduled playback. Try again.";
+          return;
+        }
+
+        countdownInterval = setInterval(async () => {
+          const remainingMs = scheduledStartMs - Date.now();
+
+          if (remainingMs > 0) {
+            status.textContent = `Scheduled. Starts in ${(remainingMs / 1000).toFixed(1)}s.`;
+            return;
+          }
+
+          clearInterval(countdownInterval);
+          countdownInterval = null;
+
+          try {
+            await startPlaybackAt(0);
+            updateDebug(
+              `Now (local): ${new Date(Date.now()).toString()}\n` +
+              `Entered start today (local): ${new Date(startTimestampMs).toString()}\n` +
+              `Calculated offset: 0.0s (${fmt(0)})`
+            );
+          } catch (err) {
+            console.error(err);
+            status.textContent = "Scheduled playback failed. See browser console.";
+          }
+        }, 100);
+
+        status.textContent = `Scheduled. Starts in ${Math.abs(offsetSeconds).toFixed(1)}s.`;
+        return;
+      }
+
+      if (offsetSeconds >= audio.duration) {
+        status.textContent = "That start time lands after the track has already ended.";
+        return;
+      }
+
+      try {
+        await startPlaybackAt(offsetSeconds);
+      } catch (err) {
+        console.error(err);
+        status.textContent = "Playback failed. See browser console.";
+      }
+    });
+
+    updateLocalClock();
+    setInterval(updateLocalClock, 500);
+  </script>
+</body>
+</html>
