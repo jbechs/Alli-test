@@ -1,41 +1,24 @@
-body {
-  margin: 0;
-  min-height: 100vh;
-  display: grid;
-  place-items: center;
-  background: #111;
-  color: #fff;
-  font-family: Arial, sans-serif;
-}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Alli Test - Buffer Player</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <main class="container">
+    <h1>UTC Synced Audio Player</h1>
 
-.container {
-  width: min(90vw, 420px);
-  text-align: center;
-  display: grid;
-  gap: 14px;
-}
+    <label for="startTime">Start Time (UTC)</label>
+    <input id="startTime" type="datetime-local" step="1" />
 
-input,
-button {
-  font-size: 1rem;
-  padding: 12px;
-  border-radius: 8px;
-  border: none;
-}
+    <button id="loadButton">Load Audio</button>
+    <button id="playButton">Play</button>
 
-input {
-  background: #222;
-  color: #fff;
-}
+    <div id="status" class="status">Not loaded.</div>
+  </main>
 
-button {
-  background: #fff;
-  color: #111;
-  cursor: pointer;
-  font-weight: bold;
-}
-
-.status {
-  min-height: 2.5em;
-  color: #ccc;
-}
+  <script src="player.js"></script>
+</body>
+</html>
