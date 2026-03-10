@@ -22,7 +22,7 @@
       width: min(90vw, 460px);
     }
 
-    button, input {
+    input, button {
       padding: 12px;
       font-size: 16px;
       border-radius: 8px;
@@ -32,6 +32,7 @@
     input {
       background: #222;
       color: white;
+      text-align: center;
     }
 
     button {
@@ -47,11 +48,10 @@
       line-height: 1.4;
     }
 
-    .debug {
+    .small {
       font-size: 13px;
       color: #999;
       line-height: 1.4;
-      white-space: pre-wrap;
     }
 
     audio {
@@ -63,14 +63,17 @@
   <div class="container">
     <h1>UTC Audio Test</h1>
 
-    <label for="startTime">Start Time (UTC)</label>
-    <input id="startTime" type="datetime-local" step="1" />
+    <div class="small">Current UTC: <span id="utcNow">--:--:--</span></div>
+
+    <label for="utcTime">Start Time (UTC, HH:MM:SS)</label>
+    <input id="utcTime" type="text" placeholder="03:51:30" />
 
     <button id="playButton" type="button">Play From UTC Time</button>
-    <button id="startButton" type="button">Play From Start</button>
+    <button id="startNowButton" type="button">Play From Start</button>
+    <button id="fill30Button" type="button">Set Start to 30 Sec Ago</button>
 
     <div id="status" class="status">Page loaded.</div>
-    <div id="debug" class="debug"></div>
+    <div id="debug" class="small"></div>
 
     <audio id="audio" controls preload="metadata">
       <source src="track.mp3" type="audio/mpeg" />
@@ -80,8 +83,10 @@
   <script>
     const audio = document.getElementById("audio");
     const playButton = document.getElementById("playButton");
-    const startButton = document.getElementById("startButton");
-    const startTimeInput = document.getElementById("startTime");
+    const startNowButton = document.getElementById("startNowButton");
+    const fill30Button = document.getElementById("fill30Button");
+    const utcTimeInput = document.getElementById("utcTime");
+    const utcNowEl = document.getElementById("utcNow");
     const status = document.getElementById("status");
     const debug = document.getElementById("debug");
 
@@ -91,6 +96,45 @@
       const m = Math.floor(s / 60);
       const sec = s % 60;
       return `${m}:${String(sec).padStart(2, "0")}`;
+    }
+
+    function pad(n) {
+      return String(n).padStart(2, "0");
+    }
+
+    function getUtcHMS(date = new Date()) {
+      return `${pad(date.getUTCHours())}:${pad(date.getUTCMinutes())}:${pad(date.getUTCSeconds())}`;
+    }
+
+    function updateUtcClock() {
+      utcNowEl.textContent = getUtcHMS();
+    }
+
+    function parseUtcTimeToday(hms) {
+      const match = hms.trim().match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?$/);
+      if (!match) return NaN;
+
+      const hours = Number(match[1]);
+      const minutes = Number(match[2]);
+      const seconds = Number(match[3] || "0");
+
+      if (
+        hours < 0 || hours > 23 ||
+        minutes < 0 || minutes > 59 ||
+        seconds < 0 || seconds > 59
+      ) {
+        return NaN;
+      }
+
+      const now = new Date();
+      return Date.UTC(
+        now.getUTCFullYear(),
+        now.getUTCMonth(),
+        now.getUTCDate(),
+        hours,
+        minutes,
+        seconds
+      );
     }
 
     function updateDebug(extra = "") {
@@ -121,7 +165,7 @@
       updateDebug();
     });
 
-    startButton.addEventListener("click", async () => {
+    startNowButton.addEventListener("click", async () => {
       try {
         audio.currentTime = 0;
         await audio.play();
@@ -130,47 +174,53 @@
       } catch (err) {
         console.error(err);
         status.textContent = "Play from start failed.";
-        updateDebug(String(err));
       }
     });
 
+    fill30Button.addEventListener("click", () => {
+      const d = new Date(Date.now() - 30000);
+      utcTimeInput.value = getUtcHMS(d);
+      status.textContent = "Set start time to 30 seconds ago in UTC.";
+    });
+
     playButton.addEventListener("click", async () => {
-      const inputValue = startTimeInput.value;
+      const inputValue = utcTimeInput.value;
 
       if (!inputValue) {
-        status.textContent = "Please enter a UTC start time.";
+        status.textContent = "Please enter a UTC time.";
         updateDebug();
         return;
       }
 
-      const startTimestampMs = new Date(inputValue + "Z").getTime();
+      const startTimestampMs = parseUtcTimeToday(inputValue);
       const nowMs = Date.now();
-      const offsetSeconds = (nowMs - startTimestampMs) / 1000;
 
       if (Number.isNaN(startTimestampMs)) {
-        status.textContent = "Invalid UTC time.";
+        status.textContent = "Invalid UTC time. Use HH:MM:SS.";
         updateDebug();
         return;
       }
+
+      const offsetSeconds = (nowMs - startTimestampMs) / 1000;
 
       updateDebug(
         `Now (UTC): ${new Date(nowMs).toISOString()}\n` +
-        `Entered start (treated as UTC): ${new Date(startTimestampMs).toISOString()}\n` +
+        `Entered start today (UTC): ${new Date(startTimestampMs).toISOString()}\n` +
         `Calculated offset: ${offsetSeconds.toFixed(1)}s (${fmt(offsetSeconds)})`
       );
 
       if (!isFinite(audio.duration)) {
-        status.textContent = "Audio duration not ready yet. Try again in a moment.";
+        status.textContent = "Audio duration not ready yet.";
         return;
       }
 
       if (offsetSeconds < 0) {
-        status.textContent = "That UTC start time is in the future.";
+        status.textContent = "That UTC time is in the future.";
         return;
       }
 
       if (offsetSeconds >= audio.duration) {
-        status.textContent = "That UTC time lands after the track has already ended.";
+        status.textContent = "That start time lands after the track has already ended.";
         return;
       }
 
@@ -178,16 +228,14 @@
         audio.currentTime = offsetSeconds;
         await audio.play();
         status.textContent = `Playback started at ${audio.currentTime.toFixed(1)}s.`;
-        updateDebug(
-          `Now (UTC): ${new Date(nowMs).toISOString()}\n` +
-          `Entered start (treated as UTC): ${new Date(startTimestampMs).toISOString()}\n` +
-          `Calculated offset: ${offsetSeconds.toFixed(1)}s (${fmt(offsetSeconds)})`
-        );
       } catch (err) {
         console.error(err);
         status.textContent = "Playback failed. See browser console.";
       }
     });
+
+    updateUtcClock();
+    setInterval(updateUtcClock, 500);
   </script>
 </body>
 </html>
