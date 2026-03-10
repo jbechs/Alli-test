@@ -99,7 +99,7 @@
         }
 
         const blob = await response.blob();
-        console.log("blob size:", blob.size);
+        console.log("blob size:", blob.size, "type:", blob.type);
 
         setStatus(`Downloaded ${Math.round(blob.size / 1024)} KB. Preparing audio...`);
 
@@ -107,10 +107,10 @@
         audio.src = blobUrl;
         audio.load();
 
-        await waitForEvent(audio, "canplaythrough", 8000);
+        await waitForReady(audio, 5000);
 
         fileLoaded = true;
-        setStatus("Audio loaded and ready.");
+        setStatus(`Audio loaded. Duration: ${formatTime(audio.duration || 0)}.`);
       } catch (err) {
         console.error("Load failed:", err);
         setStatus(`Load failed: ${err.message}`);
@@ -141,6 +141,7 @@
       }
 
       try {
+        // unlock audio on iPhone
         await audio.play();
         audio.pause();
       } catch (err) {
@@ -191,9 +192,7 @@
         audio.pause();
         audio.currentTime = offset;
 
-        if (audio.seeking) {
-          await waitForEvent(audio, "seeked", 4000);
-        }
+        await waitForSeekIfNeeded(audio, 1500);
 
         await audio.play();
         setStatus(`Playing from ${formatTime(audio.currentTime)}.`);
@@ -203,26 +202,72 @@
       }
     }
 
-    function waitForEvent(el, eventName, timeoutMs = 4000) {
+    function waitForReady(el, timeoutMs = 5000) {
       return new Promise((resolve, reject) => {
+        if (el.readyState >= 1) {
+          resolve();
+          return;
+        }
+
         let done = false;
 
-        const onEvent = () => {
+        const finish = () => {
           if (done) return;
           done = true;
-          clearTimeout(timer);
-          el.removeEventListener(eventName, onEvent);
+          cleanup();
           resolve();
         };
 
-        const timer = setTimeout(() => {
+        const fail = () => {
           if (done) return;
           done = true;
-          el.removeEventListener(eventName, onEvent);
-          reject(new Error(`${eventName} timeout`));
-        }, timeoutMs);
+          cleanup();
+          reject(new Error("audio readiness timeout"));
+        };
 
-        el.addEventListener(eventName, onEvent, { once: true });
+        const cleanup = () => {
+          clearTimeout(timer);
+          el.removeEventListener("loadedmetadata", finish);
+          el.removeEventListener("canplay", finish);
+          el.removeEventListener("loadeddata", finish);
+          el.removeEventListener("error", onError);
+        };
+
+        const onError = () => {
+          if (done) return;
+          done = true;
+          cleanup();
+          reject(new Error("audio element error"));
+        };
+
+        const timer = setTimeout(fail, timeoutMs);
+
+        el.addEventListener("loadedmetadata", finish, { once: true });
+        el.addEventListener("canplay", finish, { once: true });
+        el.addEventListener("loadeddata", finish, { once: true });
+        el.addEventListener("error", onError, { once: true });
+      });
+    }
+
+    function waitForSeekIfNeeded(el, timeoutMs = 1500) {
+      return new Promise((resolve) => {
+        if (!el.seeking) {
+          resolve();
+          return;
+        }
+
+        let done = false;
+
+        const finish = () => {
+          if (done) return;
+          done = true;
+          clearTimeout(timer);
+          el.removeEventListener("seeked", finish);
+          resolve();
+        };
+
+        const timer = setTimeout(finish, timeoutMs);
+        el.addEventListener("seeked", finish, { once: true });
       });
     }
 
@@ -251,12 +296,36 @@
       return `${mins}:${String(secs).padStart(2, "0")}`;
     }
 
+    audio.addEventListener("loadedmetadata", () => {
+      console.log("EVENT: loadedmetadata", audio.duration);
+    });
+
+    audio.addEventListener("loadeddata", () => {
+      console.log("EVENT: loadeddata");
+    });
+
+    audio.addEventListener("canplay", () => {
+      console.log("EVENT: canplay");
+    });
+
+    audio.addEventListener("canplaythrough", () => {
+      console.log("EVENT: canplaythrough");
+    });
+
     audio.addEventListener("waiting", () => {
       setStatus("Playback is waiting for data...");
     });
 
+    audio.addEventListener("stalled", () => {
+      setStatus("Playback stalled.");
+    });
+
     audio.addEventListener("ended", () => {
       setStatus("Playback ended.");
+    });
+
+    audio.addEventListener("error", () => {
+      console.log("AUDIO ERROR:", audio.error);
     });
   </script>
 </body>
