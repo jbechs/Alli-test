@@ -1,391 +1,358 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Confluence</title>
-  <style>
-    body {
-      margin: 0;
-      min-height: 100vh;
-      display: grid;
-      place-items: center;
-      background: #111;
-      color: #fff;
-      font-family: Arial, sans-serif;
-    }
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Confluence</title>
 
-    .container {
-      width: min(90vw, 480px);
-      display: grid;
-      gap: 16px;
-      text-align: center;
-    }
+<style>
 
-    h1 {
-      margin: 0;
-      font-size: 1.5rem;
-    }
-
-    label {
-      font-size: 0.95rem;
-    }
-
-    input[type="datetime-local"] {
-  color: #fff;
-  background: #222;
+body{
+  margin:0;
+  min-height:100vh;
+  display:grid;
+  place-items:center;
+  background:#111;
+  color:#fff;
+  font-family:Arial, sans-serif;
 }
 
-input[type="datetime-local"]::-webkit-datetime-edit {
-  color: #fff;
+.container{
+  width:min(90vw,480px);
+  display:grid;
+  gap:16px;
+  text-align:center;
 }
 
-input[type="datetime-local"]::-webkit-calendar-picker-indicator {
-  filter: invert(1);
+h1{
+  margin:0;
+  font-size:1.6rem;
 }
-    
-    input,
-    button {
-      font-size: 1rem;
-      padding: 12px;
-      border-radius: 8px;
-      border: none;
-    }
 
-    input {
-      background: #222;
-      color: #fff;
-    }
+label{
+  font-size:.95rem;
+}
 
-    button {
-      background: #fff;
-      color: #111;
-      font-weight: bold;
-      cursor: pointer;
-    }
+input,button{
+  font-size:1rem;
+  padding:12px;
+  border-radius:8px;
+  border:none;
+}
 
-    .status {
-      min-height: 1.5em;
-      color: #ccc;
-    }
+input{
+  background:#222;
+  color:#fff;
+}
 
-    .countdown {
-      min-height: 1.5em;
-      font-size: 1.2rem;
-      font-weight: bold;
-      color: #fff;
-    }
+button{
+  background:#fff;
+  color:#111;
+  font-weight:bold;
+  cursor:pointer;
+}
 
-    audio {
-      width: 100%;
-    }
+.status{
+  min-height:1.4em;
+  color:#bbb;
+}
 
-    .hidden {
-      display: none;
-    }
-  </style>
+.countdown{
+  min-height:1.4em;
+  font-size:1.2rem;
+  font-weight:bold;
+}
+
+audio{
+  width:100%;
+}
+
+.hidden{
+  display:none;
+}
+
+/* iOS datetime field fix */
+
+input[type="datetime-local"]{
+  color:#fff;
+  background:#222;
+}
+
+input[type="datetime-local"]::-webkit-datetime-edit{
+  color:#fff;
+}
+
+input[type="datetime-local"]::-webkit-calendar-picker-indicator{
+  filter:invert(1);
+}
+
+</style>
 </head>
+
 <body>
-  <main class="container">
-    <h1>Confluence</h1>
 
-<input id="startTime" type="datetime-local" step="1" placeholder="Start Time" />
-    <button id="playButton">Play</button>
+<main class="container">
 
-    <div id="countdown" class="countdown"></div>
-    <div id="status" class="status">Ready.</div>
+<h1>Confluence</h1>
 
-    <audio
-      id="audio"
-      preload="metadata"
-      playsinline
-      src="track.mp3"
-      class="hidden"
-    ></audio>
-  </main>
+<label for="startTime">Start Time (tap to set)</label>
+<input id="startTime" type="datetime-local" step="1" placeholder="Tap to choose start time">
 
-  <script>
-    const audio = document.getElementById("audio");
-    const playButton = document.getElementById("playButton");
-    const startInput = document.getElementById("startTime");
-    const statusEl = document.getElementById("status");
-    const countdownEl = document.getElementById("countdown");
+<button id="playButton">Play</button>
 
-    let countdownInterval = null;
-    let countdownTimeout = null;
-    let primedForFutureStart = false;
-    let countdownTargetMs = null;
+<div id="countdown" class="countdown"></div>
+<div id="status" class="status">Ready.</div>
 
-    function setStatus(msg) {
-      console.log(msg);
-      statusEl.textContent = msg;
+<audio
+id="audio"
+src="track.mp3"
+preload="metadata"
+playsinline
+class="hidden">
+</audio>
+
+</main>
+
+<script>
+
+const audio = document.getElementById("audio")
+const playButton = document.getElementById("playButton")
+const startInput = document.getElementById("startTime")
+const statusEl = document.getElementById("status")
+const countdownEl = document.getElementById("countdown")
+
+let primed = false
+let countdownTimer = null
+let countdownInterval = null
+
+function setStatus(msg){
+  statusEl.textContent = msg
+}
+
+function setCountdown(msg){
+  countdownEl.textContent = msg
+}
+
+function clearTimers(){
+
+  if(countdownInterval){
+    clearInterval(countdownInterval)
+    countdownInterval = null
+  }
+
+  if(countdownTimer){
+    clearTimeout(countdownTimer)
+    countdownTimer = null
+  }
+
+}
+
+function showPlayer(){
+  audio.classList.remove("hidden")
+  audio.controls = true
+}
+
+function hidePlayer(){
+  audio.classList.add("hidden")
+  audio.controls = false
+}
+
+function formatCountdown(ms){
+
+  const s = Math.ceil(ms/1000)
+  const m = Math.floor(s/60)
+  const sec = s % 60
+
+  return `${String(m).padStart(2,"0")}:${String(sec).padStart(2,"0")}`
+
+}
+
+function formatTrackTime(sec){
+
+  sec = Math.floor(sec)
+
+  const m = Math.floor(sec/60)
+  const s = sec%60
+
+  return `${m}:${String(s).padStart(2,"0")}`
+
+}
+
+async function ensureMetadata(){
+
+  if(audio.readyState >= 1) return
+
+  await new Promise((resolve,reject)=>{
+
+    const timeout = setTimeout(()=>reject(new Error("metadata timeout")),10000)
+
+    audio.addEventListener("loadedmetadata",()=>{
+      clearTimeout(timeout)
+      resolve()
+    },{once:true})
+
+    audio.addEventListener("error",()=>{
+      clearTimeout(timeout)
+      reject(new Error("audio load error"))
+    },{once:true})
+
+    audio.load()
+
+  })
+
+}
+
+function waitForSeek(){
+
+  return new Promise(resolve=>{
+
+    if(!audio.seeking){
+      resolve()
+      return
     }
 
-    function setCountdown(msg) {
-      countdownEl.textContent = msg;
+    audio.addEventListener("seeked",resolve,{once:true})
+
+  })
+
+}
+
+async function primeFuturePlayback(){
+
+  await ensureMetadata()
+
+  hidePlayer()
+
+  audio.pause()
+  audio.currentTime = 0
+  audio.muted = true
+
+  await audio.play()
+
+  primed = true
+
+  setStatus("Armed for countdown")
+
+}
+
+async function startImmediate(offset){
+
+  await ensureMetadata()
+
+  audio.pause()
+
+  audio.muted = false
+  audio.currentTime = Math.max(0,offset)
+
+  await waitForSeek()
+
+  await audio.play()
+
+  showPlayer()
+
+  setStatus(`Playing from ${formatTrackTime(audio.currentTime)}`)
+
+}
+
+async function fireFutureStart(){
+
+  audio.currentTime = 0
+
+  await waitForSeek()
+
+  audio.muted = false
+
+  showPlayer()
+
+  primed = false
+
+  setCountdown("")
+  setStatus("Playing")
+
+}
+
+function beginCountdown(startTime){
+
+  clearTimers()
+
+  function update(){
+
+    const remaining = startTime - Date.now()
+
+    if(remaining <= 0){
+
+      clearTimers()
+
+      setCountdown("Starting now")
+
+      fireFutureStart()
+
+      return
+
     }
 
-    function clearTimers() {
-      if (countdownInterval) {
-        clearInterval(countdownInterval);
-        countdownInterval = null;
-      }
-      if (countdownTimeout) {
-        clearTimeout(countdownTimeout);
-        countdownTimeout = null;
-      }
+    setCountdown(`Starting in ${formatCountdown(remaining)}`)
+    setStatus("Waiting")
+
+  }
+
+  update()
+
+  countdownInterval = setInterval(update,250)
+
+  countdownTimer = setTimeout(()=>{
+
+    clearTimers()
+
+    setCountdown("Starting now")
+
+    fireFutureStart()
+
+  },Math.max(0,startTime - Date.now()))
+
+}
+
+playButton.addEventListener("click", async ()=>{
+
+  clearTimers()
+
+  if(!startInput.value){
+    setStatus("Enter a start time")
+    return
+  }
+
+  const startTime = new Date(startInput.value).getTime()
+
+  const offset = (Date.now() - startTime)/1000
+
+  try{
+
+    if(offset < 0){
+
+      await primeFuturePlayback()
+
+      beginCountdown(startTime)
+
+    }else{
+
+      await startImmediate(offset)
+
     }
 
-    function showPlayer() {
-      audio.classList.remove("hidden");
-      audio.controls = true;
-    }
+  }catch(err){
 
-    function hidePlayer() {
-      audio.classList.add("hidden");
-      audio.controls = false;
-    }
+    console.error(err)
+    setStatus("Playback failed")
 
-    function formatTrackTime(sec) {
-      sec = Math.floor(Math.max(0, sec));
-      const mins = Math.floor(sec / 60);
-      const secs = sec % 60;
-      return `${mins}:${String(secs).padStart(2, "0")}`;
-    }
+  }
 
-    function formatCountdown(msRemaining) {
-      const totalSeconds = Math.ceil(msRemaining / 1000);
-      const mins = Math.floor(totalSeconds / 60);
-      const secs = totalSeconds % 60;
-      return `${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
-    }
+})
 
-    function describeMediaError(el) {
-      const code = el.error ? el.error.code : null;
-      if (code === 1) return "audio aborted";
-      if (code === 2) return "network error";
-      if (code === 3) return "decode error";
-      if (code === 4) return "source not supported";
-      return "audio error";
-    }
+audio.addEventListener("ended",()=>{
+  setStatus("Playback ended")
+})
 
-    async function ensureMetadata(timeoutMs = 10000) {
-      if (audio.readyState >= 1) return;
+</script>
 
-      await new Promise((resolve, reject) => {
-        let done = false;
-
-        const finish = () => {
-          if (done) return;
-          done = true;
-          cleanup();
-          resolve();
-        };
-
-        const fail = () => {
-          if (done) return;
-          done = true;
-          cleanup();
-          reject(new Error("metadata timeout"));
-        };
-
-        const onError = () => {
-          if (done) return;
-          done = true;
-          cleanup();
-          reject(new Error(describeMediaError(audio)));
-        };
-
-        function cleanup() {
-          clearTimeout(timer);
-          audio.removeEventListener("loadedmetadata", finish);
-          audio.removeEventListener("error", onError);
-        }
-
-        const timer = setTimeout(fail, timeoutMs);
-        audio.addEventListener("loadedmetadata", finish, { once: true });
-        audio.addEventListener("error", onError, { once: true });
-
-        audio.load();
-      });
-    }
-
-    function waitForSeekIfNeeded(timeoutMs = 2000) {
-      return new Promise((resolve) => {
-        if (!audio.seeking) {
-          resolve();
-          return;
-        }
-
-        let done = false;
-
-        const finish = () => {
-          if (done) return;
-          done = true;
-          cleanup();
-          resolve();
-        };
-
-        function cleanup() {
-          clearTimeout(timer);
-          audio.removeEventListener("seeked", finish);
-        }
-
-        const timer = setTimeout(finish, timeoutMs);
-        audio.addEventListener("seeked", finish, { once: true });
-      });
-    }
-
-    async function primeForFutureStart() {
-      primedForFutureStart = false;
-
-      await ensureMetadata();
-
-      hidePlayer();
-
-      audio.pause();
-      audio.currentTime = 0;
-      audio.muted = true;
-      audio.volume = 1;
-
-      // Start during the user gesture so iOS/Android allow it later.
-      await audio.play();
-
-      primedForFutureStart = true;
-      setStatus("Armed for countdown.");
-    }
-
-    async function playImmediate(offsetSeconds) {
-      await ensureMetadata();
-
-      if (isFinite(audio.duration) && offsetSeconds >= audio.duration) {
-        setStatus("Track already finished.");
-        setCountdown("");
-        return;
-      }
-
-      audio.pause();
-      audio.muted = false;
-      audio.currentTime = Math.max(0, offsetSeconds);
-      await waitForSeekIfNeeded();
-
-      await audio.play();
-      showPlayer();
-      setStatus(`Playing from ${formatTrackTime(audio.currentTime)}.`);
-      setCountdown("");
-    }
-
-    async function fireFutureStart() {
-      try {
-        // Audio is already running muted from the user gesture.
-        // Seek back to the real start point, wait, then unmute.
-        audio.currentTime = 0;
-        await waitForSeekIfNeeded();
-
-        audio.muted = false;
-        showPlayer();
-        primedForFutureStart = false;
-
-        setCountdown("");
-        setStatus(`Playing from ${formatTrackTime(audio.currentTime)}.`);
-      } catch (err) {
-        console.error(err);
-        setStatus(`Playback failed: ${err.message}`);
-        primedForFutureStart = false;
-      }
-    }
-
-    function beginCountdown(startTimeMs) {
-      clearTimers();
-      countdownTargetMs = startTimeMs;
-
-      function updateCountdown() {
-        const remaining = countdownTargetMs - Date.now();
-
-        if (remaining <= 0) {
-          clearTimers();
-          setCountdown("Starting now...");
-          fireFutureStart();
-          return;
-        }
-
-        setCountdown(`Starting in ${formatCountdown(remaining)}`);
-        setStatus("Waiting to begin...");
-      }
-
-      updateCountdown();
-
-      countdownInterval = setInterval(updateCountdown, 250);
-
-      countdownTimeout = setTimeout(() => {
-        clearTimers();
-        setCountdown("Starting now...");
-        fireFutureStart();
-      }, Math.max(0, startTimeMs - Date.now()));
-    }
-
-    playButton.addEventListener("click", async () => {
-      clearTimers();
-      primedForFutureStart = false;
-
-      if (!startInput.value) {
-        setStatus("Enter a start time.");
-        setCountdown("");
-        return;
-      }
-
-      const startTimeMs = new Date(startInput.value).getTime();
-
-      if (Number.isNaN(startTimeMs)) {
-        setStatus("Invalid time.");
-        setCountdown("");
-        return;
-      }
-
-      const offsetSeconds = (Date.now() - startTimeMs) / 1000;
-
-      try {
-        if (offsetSeconds < 0) {
-          await primeForFutureStart();
-          beginCountdown(startTimeMs);
-        } else {
-          await playImmediate(offsetSeconds);
-        }
-      } catch (err) {
-        console.error(err);
-        setStatus(`Playback failed: ${err.message}`);
-        setCountdown("");
-        primedForFutureStart = false;
-      }
-    });
-
-    audio.addEventListener("ended", () => {
-      setStatus("Playback ended.");
-      setCountdown("");
-      primedForFutureStart = false;
-    });
-
-    audio.addEventListener("error", () => {
-      const message = describeMediaError(audio);
-      setStatus(`Audio error: ${message}`);
-      setCountdown("");
-      primedForFutureStart = false;
-      console.log("audio.src:", audio.src);
-      console.log("audio.currentSrc:", audio.currentSrc);
-      console.log("audio.error:", audio.error);
-    });
-
-    audio.addEventListener("loadedmetadata", () => {
-      console.log("loadedmetadata", audio.duration);
-    });
-
-    audio.addEventListener("canplay", () => {
-      console.log("canplay");
-    });
-
-    audio.addEventListener("seeked", () => {
-      console.log("seeked", audio.currentTime);
-    });
-  </script>
 </body>
 </html>
