@@ -1,1 +1,227 @@
-const startTime = new Date(startInput.value).getTime()
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>UTC Synced Audio Player</title>
+
+  <style>
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      background: #111;
+      color: #fff;
+      font-family: Arial, sans-serif;
+    }
+
+    .container {
+      width: min(90vw, 480px);
+      display: grid;
+      gap: 16px;
+      text-align: center;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 1.5rem;
+    }
+
+    label {
+      font-size: 0.95rem;
+    }
+
+    input,
+    button {
+      font-size: 1rem;
+      padding: 12px;
+      border-radius: 8px;
+      border: none;
+    }
+
+    input {
+      background: #222;
+      color: #fff;
+    }
+
+    button {
+      background: #fff;
+      color: #111;
+      font-weight: bold;
+      cursor: pointer;
+    }
+
+    audio {
+      width: 100%;
+    }
+
+    .status {
+      min-height: 1.5em;
+      color: #ccc;
+    }
+
+    .countdown {
+      min-height: 1.5em;
+      font-size: 1.2rem;
+      font-weight: bold;
+      color: #fff;
+    }
+  </style>
+</head>
+<body>
+
+  <main class="container">
+    <h1>UTC Synced Audio Player</h1>
+
+    <label for="startTime">Start Time (local time)</label>
+    <input id="startTime" type="datetime-local" step="1" />
+
+    <button id="playButton">Play</button>
+
+    <div id="countdown" class="countdown"></div>
+    <div id="status" class="status">Ready.</div>
+
+    <audio id="audio" controls preload="metadata" src="track.mp3"></audio>
+  </main>
+
+  <script>
+    const audio = document.getElementById("audio");
+    const playButton = document.getElementById("playButton");
+    const startInput = document.getElementById("startTime");
+    const statusEl = document.getElementById("status");
+    const countdownEl = document.getElementById("countdown");
+
+    let countdownInterval = null;
+    let countdownTimeout = null;
+
+    function setStatus(msg) {
+      console.log(msg);
+      statusEl.textContent = msg;
+    }
+
+    function setCountdown(msg) {
+      countdownEl.textContent = msg;
+    }
+
+    function clearTimers() {
+      if (countdownInterval) {
+        clearInterval(countdownInterval);
+        countdownInterval = null;
+      }
+      if (countdownTimeout) {
+        clearTimeout(countdownTimeout);
+        countdownTimeout = null;
+      }
+    }
+
+    function formatTime(sec) {
+      sec = Math.floor(Math.max(0, sec));
+      const mins = Math.floor(sec / 60);
+      const secs = sec % 60;
+      return `${mins}:${String(secs).padStart(2, "0")}`;
+    }
+
+    function formatCountdown(msRemaining) {
+      const totalSeconds = Math.ceil(msRemaining / 1000);
+      const mins = Math.floor(totalSeconds / 60);
+      const secs = totalSeconds % 60;
+      return `${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
+    }
+
+    async function startPlayback(offsetSeconds) {
+      try {
+        if (isFinite(audio.duration) && offsetSeconds > audio.duration) {
+          setStatus("Track already finished.");
+          setCountdown("");
+          return;
+        }
+
+        audio.currentTime = Math.max(0, offsetSeconds);
+        await audio.play();
+        setStatus(`Playing from ${formatTime(audio.currentTime)}.`);
+        setCountdown("");
+      } catch (err) {
+        console.error(err);
+        setStatus("Playback failed.");
+      }
+    }
+
+    function beginCountdown(startTimeMs) {
+      clearTimers();
+
+      function updateCountdown() {
+        const now = Date.now();
+        const remaining = startTimeMs - now;
+
+        if (remaining <= 0) {
+          clearTimers();
+          setCountdown("Starting now...");
+          startPlayback(0);
+          return;
+        }
+
+        setCountdown(`Starting in ${formatCountdown(remaining)}`);
+        setStatus("Waiting to begin...");
+      }
+
+      updateCountdown();
+      countdownInterval = setInterval(updateCountdown, 250);
+
+      countdownTimeout = setTimeout(() => {
+        clearTimers();
+        setCountdown("Starting now...");
+        startPlayback(0);
+      }, Math.max(0, startTimeMs - Date.now()));
+    }
+
+    playButton.addEventListener("click", async () => {
+      clearTimers();
+
+      if (!startInput.value) {
+        setStatus("Enter a start time.");
+        setCountdown("");
+        return;
+      }
+
+      // datetime-local is local time, not UTC
+      const startTimeMs = new Date(startInput.value).getTime();
+      const now = Date.now();
+      const offsetSeconds = (now - startTimeMs) / 1000;
+
+      if (Number.isNaN(startTimeMs)) {
+        setStatus("Invalid time.");
+        setCountdown("");
+        return;
+      }
+
+      if (offsetSeconds < 0) {
+        beginCountdown(startTimeMs);
+      } else {
+        setCountdown("");
+        startPlayback(offsetSeconds);
+      }
+    });
+
+    audio.addEventListener("ended", () => {
+      setStatus("Playback ended.");
+      setCountdown("");
+    });
+
+    audio.addEventListener("error", () => {
+      const code = audio.error ? audio.error.code : null;
+      let message = "audio error";
+      if (code === 1) message = "audio aborted";
+      if (code === 2) message = "network error";
+      if (code === 3) message = "decode error";
+      if (code === 4) message = "source not supported";
+      setStatus(`Audio error: ${message}`);
+      setCountdown("");
+      console.log("audio src:", audio.src);
+      console.log("audio currentSrc:", audio.currentSrc);
+      console.log("audio error:", audio.error);
+    });
+  </script>
+
+</body>
+</html>
