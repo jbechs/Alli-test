@@ -74,10 +74,7 @@
 
     <div id="status" class="status">Ready.</div>
 
-    <audio id="audio" preload="auto" playsinline>
-      <source src="audio/track.mp3" type="audio/mpeg" />
-      Your browser does not support audio playback.
-    </audio>
+    <audio id="audio" preload="auto" playsinline src="audio/track.mp3"></audio>
   </main>
 
   <script>
@@ -90,13 +87,7 @@
     let startTimestampMs = null;
 
     console.log("MINIMAL PLAYER LOADED");
-
-    // Give the browser a hint, but do not track it in the UI.
-    try {
-      audio.load();
-    } catch (err) {
-      console.log("Initial load hint failed:", err);
-    }
+    console.log("audio src:", audio.src);
 
     playButton.addEventListener("click", async () => {
       clearExistingTimers();
@@ -119,7 +110,7 @@
       if (offsetSeconds < 0) {
         waitUntilStart();
       } else {
-        beginPlayback(offsetSeconds);
+        startAtOffset(offsetSeconds);
       }
     });
 
@@ -132,7 +123,7 @@
         const msRemaining = startTimestampMs - Date.now();
 
         if (msRemaining <= 0) {
-          beginPlayback(0);
+          startAtOffset(0);
           return;
         }
 
@@ -144,43 +135,47 @@
       tick();
     }
 
-    async function beginPlayback(initialOffsetSeconds) {
+    async function startAtOffset(offsetSeconds) {
       try {
-        const offset = Math.max(0, initialOffsetSeconds);
+        const offset = Math.max(0, offsetSeconds);
 
-        setStatus("Preparing playback...");
-
-        // Wake/unlock audio in browsers that want a gesture.
+        // Wake audio in browsers that want a gesture.
         try {
           await audio.play();
           audio.pause();
         } catch (err) {
-          console.log("Unlock attempt:", err);
+          console.log("unlock attempt:", err);
         }
 
-        await ensureMetadata(audio, 15000);
-
-        if (!Number.isNaN(audio.duration) && offset >= audio.duration) {
-          setStatus("The track has already finished.");
-          return;
+        if (audio.readyState >= 1) {
+          await seekAndPlay(offset);
+        } else {
+          setStatus("Waiting for audio metadata...");
+          await waitForMetadata(audio, 15000);
+          await seekAndPlay(offset);
         }
-
-        audio.pause();
-        audio.currentTime = offset;
-
-        await waitForSeekIfNeeded(audio, 3000);
-
-        await delay(120);
-
-        await audio.play();
-        setStatus(`Playing from ${formatTime(audio.currentTime)}.`);
       } catch (err) {
         console.error("Playback failed:", err);
         setStatus(`Playback failed: ${err.message}`);
       }
     }
 
-    function ensureMetadata(el, timeoutMs = 15000) {
+    async function seekAndPlay(offset) {
+      if (!Number.isNaN(audio.duration) && offset >= audio.duration) {
+        setStatus("The track has already finished.");
+        return;
+      }
+
+      audio.pause();
+      audio.currentTime = offset;
+
+      await waitForSeekIfNeeded(audio, 2500);
+      await audio.play();
+
+      setStatus(`Playing from ${formatTime(audio.currentTime)}.`);
+    }
+
+    function waitForMetadata(el, timeoutMs = 15000) {
       return new Promise((resolve, reject) => {
         if (el.readyState >= 1) {
           resolve();
@@ -220,14 +215,10 @@
 
         el.addEventListener("loadedmetadata", finish, { once: true });
         el.addEventListener("error", onError, { once: true });
-
-        try {
-          el.load();
-        } catch (_) {}
       });
     }
 
-    function waitForSeekIfNeeded(el, timeoutMs = 3000) {
+    function waitForSeekIfNeeded(el, timeoutMs = 2500) {
       return new Promise((resolve) => {
         if (!el.seeking) {
           resolve();
@@ -258,10 +249,6 @@
       return "audio error";
     }
 
-    function delay(ms) {
-      return new Promise(resolve => setTimeout(resolve, ms));
-    }
-
     function clearExistingTimers() {
       if (countdownTimer) {
         clearTimeout(countdownTimer);
@@ -286,6 +273,30 @@
 
       return `${mins}:${String(secs).padStart(2, "0")}`;
     }
+
+    audio.addEventListener("loadedmetadata", () => {
+      console.log("EVENT: loadedmetadata", audio.duration);
+    });
+
+    audio.addEventListener("loadeddata", () => {
+      console.log("EVENT: loadeddata");
+    });
+
+    audio.addEventListener("canplay", () => {
+      console.log("EVENT: canplay");
+    });
+
+    audio.addEventListener("seeking", () => {
+      console.log("EVENT: seeking");
+    });
+
+    audio.addEventListener("seeked", () => {
+      console.log("EVENT: seeked");
+    });
+
+    audio.addEventListener("waiting", () => {
+      console.log("EVENT: waiting");
+    });
 
     audio.addEventListener("ended", () => {
       setStatus("Playback ended.");
