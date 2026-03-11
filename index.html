@@ -70,7 +70,6 @@
   </style>
 </head>
 <body>
-
   <main class="container">
     <h1>UTC Synced Audio Player</h1>
 
@@ -82,7 +81,7 @@
     <div id="countdown" class="countdown"></div>
     <div id="status" class="status">Ready.</div>
 
-    <audio id="audio" controls preload="metadata" src="track.mp3"></audio>
+    <audio id="audio" controls preload="metadata" src="track.mp3" playsinline></audio>
   </main>
 
   <script>
@@ -94,6 +93,7 @@
 
     let countdownInterval = null;
     let countdownTimeout = null;
+    let primedForFutureStart = false;
 
     function setStatus(msg) {
       console.log(msg);
@@ -129,6 +129,24 @@
       return `${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
     }
 
+    async function primeAudioForFutureStart() {
+      try {
+        primedForFutureStart = false;
+
+        audio.pause();
+        audio.currentTime = 0;
+        audio.muted = true;
+
+        await audio.play();
+
+        primedForFutureStart = true;
+        setStatus("Audio primed for countdown.");
+      } catch (err) {
+        console.error("Prime failed:", err);
+        setStatus("Could not prime audio.");
+      }
+    }
+
     async function startPlayback(offsetSeconds) {
       try {
         if (isFinite(audio.duration) && offsetSeconds > audio.duration) {
@@ -138,6 +156,14 @@
         }
 
         audio.currentTime = Math.max(0, offsetSeconds);
+
+        if (primedForFutureStart) {
+          audio.muted = false;
+          setStatus(`Playing from ${formatTime(audio.currentTime)}.`);
+          setCountdown("");
+          return;
+        }
+
         await audio.play();
         setStatus(`Playing from ${formatTime(audio.currentTime)}.`);
         setCountdown("");
@@ -166,6 +192,7 @@
       }
 
       updateCountdown();
+
       countdownInterval = setInterval(updateCountdown, 250);
 
       countdownTimeout = setTimeout(() => {
@@ -177,6 +204,7 @@
 
     playButton.addEventListener("click", async () => {
       clearTimers();
+      primedForFutureStart = false;
 
       if (!startInput.value) {
         setStatus("Enter a start time.");
@@ -184,7 +212,6 @@
         return;
       }
 
-      // datetime-local is local time, not UTC
       const startTimeMs = new Date(startInput.value).getTime();
       const now = Date.now();
       const offsetSeconds = (now - startTimeMs) / 1000;
@@ -196,6 +223,7 @@
       }
 
       if (offsetSeconds < 0) {
+        await primeAudioForFutureStart();
         beginCountdown(startTimeMs);
       } else {
         setCountdown("");
@@ -206,6 +234,7 @@
     audio.addEventListener("ended", () => {
       setStatus("Playback ended.");
       setCountdown("");
+      primedForFutureStart = false;
     });
 
     audio.addEventListener("error", () => {
@@ -217,11 +246,11 @@
       if (code === 4) message = "source not supported";
       setStatus(`Audio error: ${message}`);
       setCountdown("");
+      primedForFutureStart = false;
       console.log("audio src:", audio.src);
       console.log("audio currentSrc:", audio.currentSrc);
       console.log("audio error:", audio.error);
     });
   </script>
-
 </body>
 </html>
