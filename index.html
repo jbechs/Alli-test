@@ -89,8 +89,7 @@ playButton.addEventListener("click", async ()=>{
     return
   }
 
-  const startTime = new Date(startInput.value + "Z").getTime()
-
+const startTime = new Date(startInput.value).getTime()
   const now = Date.now()
 
   const offset = (now - startTime) / 1000
