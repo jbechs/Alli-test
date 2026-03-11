@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Alli Test - Clean Synced Player</title>
+  <title>Alli Test - Sanity Check</title>
   <style>
     body {
       margin: 0;
@@ -22,17 +22,7 @@
       gap: 14px;
     }
 
-    h1 {
-      margin: 0;
-      font-size: 1.5rem;
-    }
-
-    label {
-      font-size: 0.95rem;
-    }
-
-    input,
-    button {
+    input, button {
       font-size: 1rem;
       padding: 12px;
       border-radius: 8px;
@@ -55,11 +45,10 @@
       min-height: 2.5em;
       color: #ccc;
       white-space: pre-line;
-      font-size: 0.95rem;
     }
 
     audio {
-      display: none;
+      width: 100%;
     }
   </style>
 </head>
@@ -74,13 +63,7 @@
 
     <div id="status" class="status">Ready.</div>
 
-    <!-- IMPORTANT: replace YOUR-USERNAME with your real GitHub username -->
-    <audio
-      id="audio"
-      src="https://YOUR-USERNAME.github.io/Alli-test/audio/track.mp3"
-      preload="metadata"
-      playsinline
-    ></audio>
+    <audio id="audio" controls preload="metadata" playsinline src="audio/track.mp3"></audio>
   </main>
 
   <script>
@@ -92,10 +75,6 @@
     let countdownTimer = null;
     let startTimestampMs = null;
 
-    console.log("CLEAN PLAYER LOADED");
-    console.log("audio.src =", audio.src);
-    console.log("canPlayType(audio/mpeg) =", audio.canPlayType("audio/mpeg"));
-
     playButton.addEventListener("click", async () => {
       clearExistingTimers();
 
@@ -105,7 +84,8 @@
         return;
       }
 
-      startTimestampMs = parseUtcInput(inputValue);
+      startTimestampMs = new Date(inputValue + "Z").getTime();
+
       if (Number.isNaN(startTimestampMs)) {
         setStatus("Invalid time format.");
         return;
@@ -119,10 +99,6 @@
         startAtOffset(offsetSeconds);
       }
     });
-
-    function parseUtcInput(value) {
-      return new Date(value + "Z").getTime();
-    }
 
     function waitUntilStart() {
       const tick = () => {
@@ -145,7 +121,6 @@
       try {
         const offset = Math.max(0, offsetSeconds);
 
-        // Wake/unlock in browsers that want gesture-based playback
         try {
           await audio.play();
           audio.pause();
@@ -153,102 +128,18 @@
           console.log("unlock attempt:", err);
         }
 
-        if (audio.readyState >= 1) {
-          await seekAndPlay(offset);
+        if (isFinite(audio.duration) && offset >= audio.duration) {
+          setStatus("The track has already finished.");
           return;
         }
 
-        setStatus("Waiting for audio metadata...");
-
-        await new Promise((resolve, reject) => {
-          let done = false;
-
-          const finish = () => {
-            if (done) return;
-            done = true;
-            cleanup();
-            resolve();
-          };
-
-          const fail = () => {
-            if (done) return;
-            done = true;
-            cleanup();
-            reject(new Error("metadata timeout"));
-          };
-
-          const onError = () => {
-            if (done) return;
-            done = true;
-            cleanup();
-            reject(new Error(describeMediaError(audio)));
-          };
-
-          function cleanup() {
-            clearTimeout(timer);
-            audio.removeEventListener("loadedmetadata", finish);
-            audio.removeEventListener("error", onError);
-          }
-
-          const timer = setTimeout(fail, 12000);
-
-          audio.addEventListener("loadedmetadata", finish, { once: true });
-          audio.addEventListener("error", onError, { once: true });
-
-          audio.load();
-        });
-
-        await seekAndPlay(offset);
+        audio.currentTime = offset;
+        await audio.play();
+        setStatus(`Playing from ${formatTime(audio.currentTime)}.`);
       } catch (err) {
-        console.error("Playback failed:", err);
+        console.error(err);
         setStatus(`Playback failed: ${err.message}`);
       }
-    }
-
-    async function seekAndPlay(offset) {
-      if (!Number.isNaN(audio.duration) && offset >= audio.duration) {
-        setStatus("The track has already finished.");
-        return;
-      }
-
-      audio.pause();
-      audio.currentTime = offset;
-
-      await waitForSeekIfNeeded(audio, 2000);
-      await audio.play();
-
-      setStatus(`Playing from ${formatTime(audio.currentTime)}.`);
-    }
-
-    function waitForSeekIfNeeded(el, timeoutMs = 2000) {
-      return new Promise((resolve) => {
-        if (!el.seeking) {
-          resolve();
-          return;
-        }
-
-        let done = false;
-
-        const finish = () => {
-          if (done) return;
-          done = true;
-          clearTimeout(timer);
-          el.removeEventListener("seeked", finish);
-          resolve();
-        };
-
-        const timer = setTimeout(finish, timeoutMs);
-        el.addEventListener("seeked", finish, { once: true });
-      });
-    }
-
-    function describeMediaError(el) {
-      const code = el.error ? el.error.code : null;
-      if (code === 1) return "audio aborted";
-      if (code === 2) return "network error";
-      if (code === 3) return "decode error";
-      if (code === 4) return "source not supported";
-      return "audio error";
     }
 
     function clearExistingTimers() {
@@ -259,53 +150,27 @@
     }
 
     function setStatus(message) {
-      console.log("STATUS:", message);
       statusEl.textContent = message;
     }
 
     function formatTime(seconds) {
       const s = Math.max(0, Math.floor(seconds));
-      const hrs = Math.floor(s / 3600);
-      const mins = Math.floor((s % 3600) / 60);
+      const mins = Math.floor(s / 60);
       const secs = s % 60;
-
-      if (hrs > 0) {
-        return `${hrs}:${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")}`;
-      }
-
       return `${mins}:${String(secs).padStart(2, "0")}`;
     }
 
-    audio.addEventListener("loadedmetadata", () => {
-      console.log("EVENT: loadedmetadata", audio.duration);
-    });
-
-    audio.addEventListener("loadeddata", () => {
-      console.log("EVENT: loadeddata");
-    });
-
-    audio.addEventListener("canplay", () => {
-      console.log("EVENT: canplay");
-    });
-
-    audio.addEventListener("seeked", () => {
-      console.log("EVENT: seeked");
-    });
-
-    audio.addEventListener("waiting", () => {
-      console.log("EVENT: waiting");
-    });
-
-    audio.addEventListener("ended", () => {
-      setStatus("Playback ended.");
-    });
-
     audio.addEventListener("error", () => {
-      console.log("AUDIO ERROR OBJECT:", audio.error);
-      console.log("AUDIO currentSrc:", audio.currentSrc);
-      console.log("AUDIO readyState:", audio.readyState);
-      console.log("AUDIO networkState:", audio.networkState);
-      setStatus(`Audio error: ${describeMediaError(audio)}`);
+      const code = audio.error ? audio.error.code : null;
+      let message = "audio error";
+      if (code === 1) message = "audio aborted";
+      if (code === 2) message = "network error";
+      if (code === 3) message = "decode error";
+      if (code === 4) message = "source not supported";
+      setStatus(`Audio error: ${message}`);
+      console.log("audio src:", audio.src);
+      console.log("audio currentSrc:", audio.currentSrc);
+      console.log("audio error:", audio.error);
     });
   </script>
 </body>
