@@ -1,93 +1,155 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Audio Sanity Check</title>
-  <style>
-    body {
-      margin: 0;
-      min-height: 100vh;
-      display: grid;
-      place-items: center;
-      background: #111;
-      color: #fff;
-      font-family: Arial, sans-serif;
-    }
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>UTC Synced Audio Player</title>
 
-    .container {
-      width: min(90vw, 480px);
-      display: grid;
-      gap: 16px;
-      text-align: center;
-    }
+<style>
+body{
+  margin:0;
+  min-height:100vh;
+  display:grid;
+  place-items:center;
+  background:#111;
+  color:#fff;
+  font-family:Arial, sans-serif;
+}
 
-    audio {
-      width: 100%;
-    }
+.container{
+  width:min(90vw,480px);
+  display:grid;
+  gap:16px;
+  text-align:center;
+}
 
-    .status {
-      min-height: 2em;
-      color: #ccc;
-      white-space: pre-line;
-    }
-  </style>
+input,button{
+  font-size:1rem;
+  padding:12px;
+  border-radius:8px;
+  border:none;
+}
+
+input{
+  background:#222;
+  color:#fff;
+}
+
+button{
+  background:#fff;
+  color:#111;
+  font-weight:bold;
+  cursor:pointer;
+}
+
+audio{
+  width:100%;
+}
+
+.status{
+  min-height:2em;
+  color:#ccc;
+}
+</style>
 </head>
+
 <body>
-  <main class="container">
-    <h1>Audio Sanity Check</h1>
 
-    <div class="status" id="status">Ready.</div>
+<main class="container">
 
-    <audio id="audio" controls preload="metadata" playsinline src="track.mp3"></audio>
-  </main>
+<h1>UTC Synced Audio Player</h1>
 
-  <script>
-    const audio = document.getElementById("audio");
-    const status = document.getElementById("status");
+<label>Start Time (UTC)</label>
+<input id="startTime" type="datetime-local" step="1">
 
-    function setStatus(message) {
-      console.log(message);
-      status.textContent = message;
+<button id="playButton">Play</button>
+
+<div class="status" id="status">Ready.</div>
+
+<audio id="audio" controls preload="metadata" src="track.mp3"></audio>
+
+</main>
+
+<script>
+
+const audio = document.getElementById("audio")
+const playButton = document.getElementById("playButton")
+const startInput = document.getElementById("startTime")
+const status = document.getElementById("status")
+
+function setStatus(msg){
+  console.log(msg)
+  status.textContent = msg
+}
+
+playButton.addEventListener("click", async ()=>{
+
+  if(!startInput.value){
+    setStatus("Enter a UTC start time.")
+    return
+  }
+
+  const startTime = new Date(startInput.value + "Z").getTime()
+
+  const now = Date.now()
+
+  const offset = (now - startTime) / 1000
+
+  if(offset < 0){
+
+    const wait = Math.abs(offset)
+
+    setStatus(`Starting in ${Math.ceil(wait)} seconds...`)
+
+    setTimeout(()=>startPlayback(0), wait*1000)
+
+  } else {
+
+    startPlayback(offset)
+
+  }
+
+})
+
+async function startPlayback(offset){
+
+  try{
+
+    if(isFinite(audio.duration) && offset > audio.duration){
+
+      setStatus("Track already finished.")
+      return
+
     }
 
-    function describeMediaError(el) {
-      const code = el.error ? el.error.code : null;
-      if (code === 1) return "audio aborted";
-      if (code === 2) return "network error";
-      if (code === 3) return "decode error";
-      if (code === 4) return "source not supported";
-      return "audio error";
-    }
+    audio.currentTime = Math.max(0,offset)
 
-    setStatus("Ready.");
+    await audio.play()
 
-    console.log("audio.src =", audio.src);
-    console.log("canPlayType(audio/mpeg) =", audio.canPlayType("audio/mpeg"));
+    setStatus(`Playing from ${formatTime(audio.currentTime)}`)
 
-    audio.addEventListener("loadedmetadata", () => {
-      setStatus(`Metadata loaded. Duration: ${audio.duration.toFixed(2)}s`);
-    });
+  }catch(err){
 
-    audio.addEventListener("loadeddata", () => {
-      setStatus("Audio data loaded.");
-    });
+    setStatus("Playback failed.")
+    console.error(err)
 
-    audio.addEventListener("canplay", () => {
-      setStatus("Audio can play.");
-    });
+  }
 
-    audio.addEventListener("play", () => {
-      setStatus("Playing.");
-    });
+}
 
-    audio.addEventListener("error", () => {
-      console.log("audio.error =", audio.error);
-      console.log("audio.currentSrc =", audio.currentSrc);
-      console.log("audio.networkState =", audio.networkState);
-      console.log("audio.readyState =", audio.readyState);
-      setStatus(`Audio error: ${describeMediaError(audio)}`);
-    });
-  </script>
+function formatTime(sec){
+
+  sec=Math.floor(sec)
+
+  const m=Math.floor(sec/60)
+
+  const s=sec%60
+
+  return `${m}:${String(s).padStart(2,"0")}`
+
+}
+
+</script>
+
 </body>
 </html>
