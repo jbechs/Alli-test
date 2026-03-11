@@ -74,9 +74,10 @@
 
     <div id="status" class="status">Ready.</div>
 
+    <!-- IMPORTANT: replace YOUR-USERNAME with your real GitHub username -->
     <audio
       id="audio"
-      src="audio/track.mp3"
+      src="https://YOUR-USERNAME.github.io/Alli-test/audio/track.mp3"
       preload="metadata"
       playsinline
     ></audio>
@@ -144,10 +145,7 @@
       try {
         const offset = Math.max(0, offsetSeconds);
 
-        // Force the browser to begin source selection/loading now.
-        audio.load();
-
-        // user-gesture wakeup
+        // Wake/unlock in browsers that want gesture-based playback
         try {
           await audio.play();
           audio.pause();
@@ -155,70 +153,71 @@
           console.log("unlock attempt:", err);
         }
 
-        if (audio.readyState < 1) {
-          setStatus("Waiting for audio metadata...");
-          await waitForMetadata(audio, 15000);
-        }
-
-        if (!Number.isNaN(audio.duration) && offset >= audio.duration) {
-          setStatus("The track has already finished.");
+        if (audio.readyState >= 1) {
+          await seekAndPlay(offset);
           return;
         }
 
-        audio.pause();
-        audio.currentTime = offset;
+        setStatus("Waiting for audio metadata...");
 
-        await waitForSeekIfNeeded(audio, 2000);
+        await new Promise((resolve, reject) => {
+          let done = false;
 
-        await audio.play();
-        setStatus(`Playing from ${formatTime(audio.currentTime)}.`);
+          const finish = () => {
+            if (done) return;
+            done = true;
+            cleanup();
+            resolve();
+          };
+
+          const fail = () => {
+            if (done) return;
+            done = true;
+            cleanup();
+            reject(new Error("metadata timeout"));
+          };
+
+          const onError = () => {
+            if (done) return;
+            done = true;
+            cleanup();
+            reject(new Error(describeMediaError(audio)));
+          };
+
+          function cleanup() {
+            clearTimeout(timer);
+            audio.removeEventListener("loadedmetadata", finish);
+            audio.removeEventListener("error", onError);
+          }
+
+          const timer = setTimeout(fail, 12000);
+
+          audio.addEventListener("loadedmetadata", finish, { once: true });
+          audio.addEventListener("error", onError, { once: true });
+
+          audio.load();
+        });
+
+        await seekAndPlay(offset);
       } catch (err) {
         console.error("Playback failed:", err);
         setStatus(`Playback failed: ${err.message}`);
       }
     }
 
-    function waitForMetadata(el, timeoutMs = 15000) {
-      return new Promise((resolve, reject) => {
-        if (el.readyState >= 1) {
-          resolve();
-          return;
-        }
+    async function seekAndPlay(offset) {
+      if (!Number.isNaN(audio.duration) && offset >= audio.duration) {
+        setStatus("The track has already finished.");
+        return;
+      }
 
-        let done = false;
+      audio.pause();
+      audio.currentTime = offset;
 
-        const finish = () => {
-          if (done) return;
-          done = true;
-          cleanup();
-          resolve();
-        };
+      await waitForSeekIfNeeded(audio, 2000);
+      await audio.play();
 
-        const fail = () => {
-          if (done) return;
-          done = true;
-          cleanup();
-          reject(new Error("metadata timeout"));
-        };
-
-        const onError = () => {
-          if (done) return;
-          done = true;
-          cleanup();
-          reject(new Error(describeMediaError(el)));
-        };
-
-        const cleanup = () => {
-          clearTimeout(timer);
-          el.removeEventListener("loadedmetadata", finish);
-          el.removeEventListener("error", onError);
-        };
-
-        const timer = setTimeout(fail, timeoutMs);
-
-        el.addEventListener("loadedmetadata", finish, { once: true });
-        el.addEventListener("error", onError, { once: true });
-      });
+      setStatus(`Playing from ${formatTime(audio.currentTime)}.`);
     }
 
     function waitForSeekIfNeeded(el, timeoutMs = 2000) {
