@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Alli Test - Sanity Check</title>
+  <title>Audio Sanity Check</title>
   <style>
     body {
       margin: 0;
@@ -16,161 +16,77 @@
     }
 
     .container {
-      width: min(90vw, 420px);
-      text-align: center;
+      width: min(90vw, 480px);
       display: grid;
-      gap: 14px;
-    }
-
-    input, button {
-      font-size: 1rem;
-      padding: 12px;
-      border-radius: 8px;
-      border: none;
-    }
-
-    input {
-      background: #222;
-      color: #fff;
-    }
-
-    button {
-      background: #fff;
-      color: #111;
-      cursor: pointer;
-      font-weight: bold;
-    }
-
-    .status {
-      min-height: 2.5em;
-      color: #ccc;
-      white-space: pre-line;
+      gap: 16px;
+      text-align: center;
     }
 
     audio {
       width: 100%;
     }
+
+    .status {
+      min-height: 2em;
+      color: #ccc;
+      white-space: pre-line;
+    }
   </style>
 </head>
 <body>
   <main class="container">
-    <h1>UTC Synced Audio Player</h1>
+    <h1>Audio Sanity Check</h1>
 
-    <label for="startTime">Start Time (UTC)</label>
-    <input id="startTime" type="datetime-local" step="1" />
+    <div class="status" id="status">Ready.</div>
 
-    <button id="playButton">Play</button>
-
-    <div id="status" class="status">Ready.</div>
-
-    <audio id="audio" controls preload="metadata" playsinline src="audio/track.mp3"></audio>
+    <audio id="audio" controls preload="metadata" playsinline src="track.mp3"></audio>
   </main>
 
   <script>
     const audio = document.getElementById("audio");
-    const playButton = document.getElementById("playButton");
-    const startTimeInput = document.getElementById("startTime");
-    const statusEl = document.getElementById("status");
-
-    let countdownTimer = null;
-    let startTimestampMs = null;
-
-    playButton.addEventListener("click", async () => {
-      clearExistingTimers();
-
-      const inputValue = startTimeInput.value;
-      if (!inputValue) {
-        setStatus("Please enter a UTC start time.");
-        return;
-      }
-
-      startTimestampMs = new Date(inputValue + "Z").getTime();
-
-      if (Number.isNaN(startTimestampMs)) {
-        setStatus("Invalid time format.");
-        return;
-      }
-
-      const offsetSeconds = (Date.now() - startTimestampMs) / 1000;
-
-      if (offsetSeconds < 0) {
-        waitUntilStart();
-      } else {
-        startAtOffset(offsetSeconds);
-      }
-    });
-
-    function waitUntilStart() {
-      const tick = () => {
-        const msRemaining = startTimestampMs - Date.now();
-
-        if (msRemaining <= 0) {
-          startAtOffset(0);
-          return;
-        }
-
-        const totalSeconds = Math.ceil(msRemaining / 1000);
-        setStatus(`Starting in ${totalSeconds} second${totalSeconds === 1 ? "" : "s"}...`);
-        countdownTimer = setTimeout(tick, 250);
-      };
-
-      tick();
-    }
-
-    async function startAtOffset(offsetSeconds) {
-      try {
-        const offset = Math.max(0, offsetSeconds);
-
-        try {
-          await audio.play();
-          audio.pause();
-        } catch (err) {
-          console.log("unlock attempt:", err);
-        }
-
-        if (isFinite(audio.duration) && offset >= audio.duration) {
-          setStatus("The track has already finished.");
-          return;
-        }
-
-        audio.currentTime = offset;
-        await audio.play();
-        setStatus(`Playing from ${formatTime(audio.currentTime)}.`);
-      } catch (err) {
-        console.error(err);
-        setStatus(`Playback failed: ${err.message}`);
-      }
-    }
-
-    function clearExistingTimers() {
-      if (countdownTimer) {
-        clearTimeout(countdownTimer);
-        countdownTimer = null;
-      }
-    }
+    const status = document.getElementById("status");
 
     function setStatus(message) {
-      statusEl.textContent = message;
+      console.log(message);
+      status.textContent = message;
     }
 
-    function formatTime(seconds) {
-      const s = Math.max(0, Math.floor(seconds));
-      const mins = Math.floor(s / 60);
-      const secs = s % 60;
-      return `${mins}:${String(secs).padStart(2, "0")}`;
+    function describeMediaError(el) {
+      const code = el.error ? el.error.code : null;
+      if (code === 1) return "audio aborted";
+      if (code === 2) return "network error";
+      if (code === 3) return "decode error";
+      if (code === 4) return "source not supported";
+      return "audio error";
     }
+
+    setStatus("Ready.");
+
+    console.log("audio.src =", audio.src);
+    console.log("canPlayType(audio/mpeg) =", audio.canPlayType("audio/mpeg"));
+
+    audio.addEventListener("loadedmetadata", () => {
+      setStatus(`Metadata loaded. Duration: ${audio.duration.toFixed(2)}s`);
+    });
+
+    audio.addEventListener("loadeddata", () => {
+      setStatus("Audio data loaded.");
+    });
+
+    audio.addEventListener("canplay", () => {
+      setStatus("Audio can play.");
+    });
+
+    audio.addEventListener("play", () => {
+      setStatus("Playing.");
+    });
 
     audio.addEventListener("error", () => {
-      const code = audio.error ? audio.error.code : null;
-      let message = "audio error";
-      if (code === 1) message = "audio aborted";
-      if (code === 2) message = "network error";
-      if (code === 3) message = "decode error";
-      if (code === 4) message = "source not supported";
-      setStatus(`Audio error: ${message}`);
-      console.log("audio src:", audio.src);
-      console.log("audio currentSrc:", audio.currentSrc);
-      console.log("audio error:", audio.error);
+      console.log("audio.error =", audio.error);
+      console.log("audio.currentSrc =", audio.currentSrc);
+      console.log("audio.networkState =", audio.networkState);
+      console.log("audio.readyState =", audio.readyState);
+      setStatus(`Audio error: ${describeMediaError(audio)}`);
     });
   </script>
 </body>
