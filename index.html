@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Alli Test - Minimal Synced Player</title>
+  <title>Alli Test - Clean Synced Player</title>
   <style>
     body {
       margin: 0;
@@ -74,7 +74,12 @@
 
     <div id="status" class="status">Ready.</div>
 
-    <audio id="audio" preload="auto" playsinline src="audio/track.mp3"></audio>
+    <audio
+      id="audio"
+      src="audio/track.mp3"
+      preload="metadata"
+      playsinline
+    ></audio>
   </main>
 
   <script>
@@ -86,8 +91,9 @@
     let countdownTimer = null;
     let startTimestampMs = null;
 
-    console.log("MINIMAL PLAYER LOADED");
-    console.log("audio src:", audio.src);
+    console.log("CLEAN PLAYER LOADED");
+    console.log("audio.src =", audio.src);
+    console.log("canPlayType(audio/mpeg) =", audio.canPlayType("audio/mpeg"));
 
     playButton.addEventListener("click", async () => {
       clearExistingTimers();
@@ -99,7 +105,6 @@
       }
 
       startTimestampMs = parseUtcInput(inputValue);
-
       if (Number.isNaN(startTimestampMs)) {
         setStatus("Invalid time format.");
         return;
@@ -139,7 +144,7 @@
       try {
         const offset = Math.max(0, offsetSeconds);
 
-        // Wake audio in browsers that want a gesture.
+        // user-gesture wakeup
         try {
           await audio.play();
           audio.pause();
@@ -147,35 +152,31 @@
           console.log("unlock attempt:", err);
         }
 
-        if (audio.readyState >= 1) {
-          await seekAndPlay(offset);
-        } else {
+        // Wait only for metadata if needed
+        if (audio.readyState < 1) {
           setStatus("Waiting for audio metadata...");
-          await waitForMetadata(audio, 15000);
-          await seekAndPlay(offset);
+          await waitForMetadata(audio, 10000);
         }
+
+        if (!Number.isNaN(audio.duration) && offset >= audio.duration) {
+          setStatus("The track has already finished.");
+          return;
+        }
+
+        audio.pause();
+        audio.currentTime = offset;
+
+        await waitForSeekIfNeeded(audio, 2000);
+
+        await audio.play();
+        setStatus(`Playing from ${formatTime(audio.currentTime)}.`);
       } catch (err) {
         console.error("Playback failed:", err);
         setStatus(`Playback failed: ${err.message}`);
       }
     }
 
-    async function seekAndPlay(offset) {
-      if (!Number.isNaN(audio.duration) && offset >= audio.duration) {
-        setStatus("The track has already finished.");
-        return;
-      }
-
-      audio.pause();
-      audio.currentTime = offset;
-
-      await waitForSeekIfNeeded(audio, 2500);
-      await audio.play();
-
-      setStatus(`Playing from ${formatTime(audio.currentTime)}.`);
-    }
-
-    function waitForMetadata(el, timeoutMs = 15000) {
+    function waitForMetadata(el, timeoutMs = 10000) {
       return new Promise((resolve, reject) => {
         if (el.readyState >= 1) {
           resolve();
@@ -218,7 +219,7 @@
       });
     }
 
-    function waitForSeekIfNeeded(el, timeoutMs = 2500) {
+    function waitForSeekIfNeeded(el, timeoutMs = 2000) {
       return new Promise((resolve) => {
         if (!el.seeking) {
           resolve();
@@ -284,10 +285,6 @@
 
     audio.addEventListener("canplay", () => {
       console.log("EVENT: canplay");
-    });
-
-    audio.addEventListener("seeking", () => {
-      console.log("EVENT: seeking");
     });
 
     audio.addEventListener("seeked", () => {
