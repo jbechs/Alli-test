@@ -51,10 +51,6 @@
       cursor: pointer;
     }
 
-    audio {
-      width: 100%;
-    }
-
     .status {
       min-height: 1.5em;
       color: #ccc;
@@ -65,6 +61,14 @@
       font-size: 1.2rem;
       font-weight: bold;
       color: #fff;
+    }
+
+    audio {
+      width: 100%;
+    }
+
+    .hidden {
+      display: none;
     }
   </style>
 </head>
@@ -82,10 +86,10 @@
 
     <audio
       id="audio"
-      controls
       preload="metadata"
       playsinline
       src="track.mp3"
+      class="hidden"
     ></audio>
   </main>
 
@@ -99,7 +103,7 @@
     let countdownInterval = null;
     let countdownTimeout = null;
     let primedForFutureStart = false;
-    let targetStartMs = null;
+    let countdownTargetMs = null;
 
     function setStatus(msg) {
       console.log(msg);
@@ -119,6 +123,16 @@
         clearTimeout(countdownTimeout);
         countdownTimeout = null;
       }
+    }
+
+    function showPlayer() {
+      audio.classList.remove("hidden");
+      audio.controls = true;
+    }
+
+    function hidePlayer() {
+      audio.classList.add("hidden");
+      audio.controls = false;
     }
 
     function formatTrackTime(sec) {
@@ -181,7 +195,6 @@
         audio.addEventListener("loadedmetadata", finish, { once: true });
         audio.addEventListener("error", onError, { once: true });
 
-        // Explicit nudge in case browser hasn't started fetching yet
         audio.load();
       });
     }
@@ -217,60 +230,71 @@
 
       await ensureMetadata();
 
+      hidePlayer();
+
       audio.pause();
       audio.currentTime = 0;
       audio.muted = true;
       audio.volume = 1;
 
-      // This is the key iOS/Android-friendly move:
-      // begin playback during the user gesture, but muted.
+      // Start during the user gesture so iOS/Android allow it later.
       await audio.play();
+
       primedForFutureStart = true;
       setStatus("Armed for countdown.");
     }
 
-    async function playAtOffset(offsetSeconds) {
+    async function playImmediate(offsetSeconds) {
       await ensureMetadata();
 
       if (isFinite(audio.duration) && offsetSeconds >= audio.duration) {
         setStatus("Track already finished.");
         setCountdown("");
-        primedForFutureStart = false;
         return;
       }
 
       audio.pause();
+      audio.muted = false;
       audio.currentTime = Math.max(0, offsetSeconds);
       await waitForSeekIfNeeded();
 
-      if (primedForFutureStart) {
-        // Resume from the already-primed element
-        audio.muted = false;
-        setStatus(`Playing from ${formatTrackTime(audio.currentTime)}.`);
-        setCountdown("");
-        primedForFutureStart = false;
-        return;
-      }
-
       await audio.play();
+      showPlayer();
       setStatus(`Playing from ${formatTrackTime(audio.currentTime)}.`);
       setCountdown("");
     }
 
+    async function fireFutureStart() {
+      try {
+        // Audio is already running muted from the user gesture.
+        // Seek back to the real start point, wait, then unmute.
+        audio.currentTime = 0;
+        await waitForSeekIfNeeded();
+
+        audio.muted = false;
+        showPlayer();
+        primedForFutureStart = false;
+
+        setCountdown("");
+        setStatus(`Playing from ${formatTrackTime(audio.currentTime)}.`);
+      } catch (err) {
+        console.error(err);
+        setStatus(`Playback failed: ${err.message}`);
+        primedForFutureStart = false;
+      }
+    }
+
     function beginCountdown(startTimeMs) {
       clearTimers();
-      targetStartMs = startTimeMs;
+      countdownTargetMs = startTimeMs;
 
       function updateCountdown() {
-        const remaining = targetStartMs - Date.now();
+        const remaining = countdownTargetMs - Date.now();
 
         if (remaining <= 0) {
           clearTimers();
           setCountdown("Starting now...");
-          playAtOffset(0).catch((err) => {
-            console.error(err);
-            setStatus(`Playback failed: ${err.message}`);
-          });
+          fireFutureStart();
           return;
         }
 
@@ -279,15 +303,13 @@
       }
 
       updateCountdown();
+
       countdownInterval = setInterval(updateCountdown, 250);
 
       countdownTimeout = setTimeout(() => {
         clearTimers();
         setCountdown("Starting now...");
-        playAtOffset(0).catch((err) => {
-          console.error(err);
-          setStatus(`Playback failed: ${err.message}`);
-        });
+        fireFutureStart();
       }, Math.max(0, startTimeMs - Date.now()));
     }
 
@@ -301,7 +323,6 @@
         return;
       }
 
-      // datetime-local is LOCAL time, not UTC.
       const startTimeMs = new Date(startInput.value).getTime();
 
       if (Number.isNaN(startTimeMs)) {
@@ -317,8 +338,7 @@
           await primeForFutureStart();
           beginCountdown(startTimeMs);
         } else {
-          setCountdown("");
-          await playAtOffset(offsetSeconds);
+          await playImmediate(offsetSeconds);
         }
       } catch (err) {
         console.error(err);
@@ -350,6 +370,10 @@
 
     audio.addEventListener("canplay", () => {
       console.log("canplay");
+    });
+
+    audio.addEventListener("seeked", () => {
+      console.log("seeked", audio.currentTime);
     });
   </script>
 </body>
